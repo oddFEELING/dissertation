@@ -1,0 +1,16 @@
+scanpy[leiden]
+numpy
+pandas
+seaborn
+matplotlib
+rich
+torch
+torchvision
+SpaGCN
+torch_sparse
+torch_scatter
+torch_geometric
+transformers
+datasets
+tensorboard
+pydantic

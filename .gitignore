@@ -1,0 +1,9 @@
+.venv
+./src/data
+.ipynb_checkpoints
+.idea
+/src/data/
+/src/bert/checkpoints/
+/src/bert/tokens/
+/__pycache__
+__pycache__
