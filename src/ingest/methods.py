@@ -1,3 +1,8 @@
+"""
+This file is just the analysis pipeline from script.py in the root folder
+for easier pipeline building.
+"""
+
 import os
 from pathlib import Path
 from typing import List
