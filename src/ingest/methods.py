@@ -5,7 +5,7 @@ for easier pipeline building.
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import numpy as np
 import scanpy as sc
 import pandas as pd
@@ -20,17 +20,60 @@ from rich import print as rprint
 from rich.table import Table
 from rich.console import Console
 from pydantic import BaseModel
+from enum import Enum, auto
 
 console = Console()
 
 
+class TissueType(str, Enum):
+    """
+    Keep track of tissue types added to the tokenizer.
+    This is just an example list to show how to use enums.
+    """
+    UNKNOWN = "unknown"
+    LUNG_CANCER = "lung_cancer"
+    BREAST_CANCER = "breast_cancer"
+    BRAIN_CANCER = "brain_cancer"
+    COLON_CANCER = "colon_cancer"
+    HEALTHY_LUNG = "healthy_lung"
+    HEALTHY_BREAST = "healthy_breast"
+    HEALTHY_BRAIN = "healthy_brain"
+    HEALTHY_COLON = "healthy_colon"
+
+
 class IngestState(BaseModel):
+    """
+    State object for the ingestion pipeline.
+
+    :param actions_taken: List of actions performed during ingestion
+    :param figures_dir: Directory to save figures
+    :param cluster_key: Key for clustering results
+    :param tissue_type: Type of tissue being analyzed
+    :param adata: AnnData object containing the data
+    """
     actions_taken: List[str] = []
     figures_dir: Path
     cluster_key: str = 'clusters'
+    tissue_type: TissueType = TissueType.UNKNOWN
+    adata: Optional[AnnData] = None
+
+    model_config = {
+        "arbitrary_types_allowed": True,  # Allow AnnData and other complex types
+        "validate_assignment": True  # Validate data on assignment
+    }
 
 
 class PyPlotConfig(BaseModel):
+    """
+    Configuration for matplotlib pyplot settings.
+
+    :param font_size: Default font size for all text
+    :param title_size: Title font size
+    :param label_size: Axis label font size
+    :param xtick_size: X-axis tick label font size
+    :param ytick_size: Y-axis tick label font size
+    :param legend_size: Legend font size
+    """
     font_size: int = 12
     title_size: int = 14
     label_size: int = 8
@@ -39,49 +82,65 @@ class PyPlotConfig(BaseModel):
     legend_size: int = 8
 
 
-def ingest_config(sc_verbosity: int, pyplot_config: PyPlotConfig, figures_dir: str) -> IngestState:
+def ingest_config(
+        sc_verbosity: int,
+        pyplot_config: PyPlotConfig,
+        figures_dir: str,
+        tissue_type: TissueType = TissueType.UNKNOWN
+) -> IngestState:
     """
-    Applies any default params to the ingestion pipeline
+    Applies default parameters to the ingestion pipeline.
 
     :param sc_verbosity: Scanpy verbosity level
-    :param pyplot_config: Initial config for pyplot
+    :param pyplot_config: Initial configuration for pyplot
     :param figures_dir: Directory to store figures
+    :param tissue_type: Type of tissue being analyzed
     :return: Initialized state for ingestion pipeline
     """
-    # sc.logging.print_versions() # uncomment to see versions print
-    console.log("----- Initialising ingestion pipeline -----\n\n")
+    console.print("----- Initialising ingestion pipeline -----\n\n")
     sc.settings.verbosity = sc_verbosity
     plot_conf = pyplot_config.dict()
     plt.rcParams.update({
-        'font.size': plot_conf['font_size'],  # Default font size for all text
-        'axes.titlesize': plot_conf['title_size'],  # Title font size
-        'axes.labelsize': plot_conf['label_size'],  # Axis label font size
-        'xtick.labelsize': plot_conf['xtick_size'],  # X-axis tick label font size
-        'ytick.labelsize': plot_conf['ytick_size'],  # Y-axis tick label font size
-        'legend.fontsize': plot_conf['legend_size']  # Legend font size
+        'font.size': plot_conf['font_size'],
+        'axes.titlesize': plot_conf['title_size'],
+        'axes.labelsize': plot_conf['label_size'],
+        'xtick.labelsize': plot_conf['xtick_size'],
+        'ytick.labelsize': plot_conf['ytick_size'],
+        'legend.fontsize': plot_conf['legend_size']
     })
-    ingest_state = IngestState(actions_taken=["Initialized ingestion pipeline"], figures_dir=Path(figures_dir))
+    ingest_state = IngestState(
+        actions_taken=["Initialized ingestion pipeline"],
+        figures_dir=Path(figures_dir),
+        tissue_type=tissue_type
+    )
 
     return ingest_state
 
 
-def load_data(ingest_state: IngestState, path: str) -> tuple[AnnData, IngestState]:
+def load_data(state: IngestState, path: str) -> IngestState:
     """
     Loads dataset from given path
-    :param ingest_state: Pipeline state object
+    :param state: Pipeline state object
     :param path: Path to ST Dataset
     :return: State object and loaded anndata object
     """
 
-    console.log("\n\n----- Loading data -----\n\n")
-    os.makedirs(ingest_state.figures_dir, exist_ok=True)
+    console.print("\n\n----- Loading data -----\n\n")
+    os.makedirs(state.figures_dir, exist_ok=True)
+
+    # Set scanpy figure path to match our figures directory
+    sc.settings.figdir = state.figures_dir
+
     table = Table(title='Data loader')
     table.add_column('Metric')
     table.add_column('Value', justify='center')
-    console.log(f'Loading dataset from {path}')
+    console.print(f'Loading dataset from {path}')
     # Load data
     adata = sc.read_visium(path)
     adata.var_names_make_unique()
+
+    # Add tissue type to adata
+    adata.obs['tissue_type'] = state.tissue_type
 
     # Get Mito and Ribo genes
     adata.var['mito'] = adata.var.index.str.startswith('MT')  # MT for humans
@@ -99,7 +158,7 @@ def load_data(ingest_state: IngestState, path: str) -> tuple[AnnData, IngestStat
     ax.set_title('Total Cell Counts Per Spot')
     ax.set_xlabel('Cell counts')
     ax.set_ylabel('Number of spots')
-    fig.savefig(ingest_state.figures_dir / 'cell_counts_per_spot.png', dpi=300, bbox_inches='tight')
+    fig.savefig(state.figures_dir / 'cell_counts_per_spot.png', dpi=300, bbox_inches='tight')
     plt.close(fig)
 
     # Genes per spot
@@ -107,31 +166,35 @@ def load_data(ingest_state: IngestState, path: str) -> tuple[AnnData, IngestStat
     sns.histplot(adata.obs['n_genes_by_counts'], kde=False, ax=ax)
     ax.set_title('Genes Per Spot')
     ax.set_xlabel('Genes')
-    fig.savefig(ingest_state.figures_dir / 'genes_per_spot.png', dpi=300, bbox_inches='tight')
+    fig.savefig(state.figures_dir / 'genes_per_spot.png', dpi=300, bbox_inches='tight')
     plt.close(fig)
 
     # Outliers with violin
     sc.pl.violin(adata, ['n_genes_by_counts', 'total_counts', 'pct_counts_mito', 'pct_counts_ribo'],
                  jitter=0.4,
                  multi_panel=True,
-                 save='_outliers.png'
+                 save='_qc_violin_plots.png'
                  )
+    plt.close()
 
     table.add_row('Cell count', str(len(adata.obs_names)))
     table.add_row('Gene count', str(len(adata.var_names)))
-    console.log(table)
-    ingest_state.actions_taken.append('Loaded data')
-    return adata, ingest_state
+    console.print(table)
+    state.actions_taken.append('Loaded data')
+    state.adata = adata
+
+    return state
 
 
-def perform_qc(ingest_state: IngestState, adata: AnnData, mito_threshold=20, ribo_threshold=20, cell_threshold=30,
-               gene_threshold=5, n_top_genes: int = 5000, norm_value=1e4, log_transform=True):
+def perform_qc(state: IngestState, mito_threshold=20, ribo_threshold=20, cell_threshold=30,
+               gene_threshold=5, n_top_genes: int = 5000, norm_value=1e4, log_transform=True) -> IngestState:
     """"""
-    console.log("\n\n----- Performing QC -----\n\n")
+    console.print("\n\n----- Performing QC -----\n\n")
     table = Table(title='Data QC')
     table.add_column('Metric')
     table.add_column('Value', justify='center')
     # Perform quality control
+    adata = state.adata
     sc.pp.filter_cells(adata, min_counts=cell_threshold)
     sc.pp.filter_genes(adata, min_cells=gene_threshold)
     adata = adata[adata.obs['pct_counts_mito'] < mito_threshold].copy()
@@ -145,51 +208,103 @@ def perform_qc(ingest_state: IngestState, adata: AnnData, mito_threshold=20, rib
     adata = adata[:, adata.var.highly_variable]
     table.add_row('Remaining Cell count', str(len(adata.obs_names)))
     table.add_row('Remaining Gene count', str(len(adata.var_names)))
-    console.log(table)
+    console.print(table)
     sc.pp.regress_out(adata, ['total_counts', 'pct_counts_mito', 'pct_counts_ribo'])
     sc.pp.scale(adata, max_value=10)
-    ingest_state.actions_taken.append('Performed QC')
+    state.actions_taken.append('Performed QC')
+    state.adata = adata
     # Run pca to reduce dimensionality
-    return adata, ingest_state
+    return state
 
 
-def cluster_data(ingest_state: IngestState, adata: AnnData, n_pcs=15, n_neighbors=30,
-                 cluster_res=0.5):
-    """"""
-    console.log("\n\n----- Performing Clustering -----\n\n")
+def cluster_data(state: IngestState, n_pcs=15, n_neighbors=30,
+                 cluster_res=0.5) -> IngestState:
+    """
+    Perform clustering analysis on the data
+    
+    :param state: Pipeline state object
+    :param n_pcs: Number of principal components to use
+    :param n_neighbors: Fixed number of neighbors to use (default: 30)
+    :param cluster_res: Resolution for clustering
+    :return: Updated state object
+    """
+    console.print("\n\n----- Performing Clustering -----\n\n")
+    adata = state.adata
+
+    # Ensure scanpy uses the correct figure directory
+    sc.settings.figdir = state.figures_dir
+
+    # PCA
     sc.pp.pca(adata, random_state=42)
-    sc.pl.pca_variance_ratio(adata, log=True, n_pcs=n_pcs, save='_variance.png')
+    sc.pl.pca_variance_ratio(
+        adata,
+        log=True,
+        n_pcs=n_pcs,
+        show=False,
+        save='_pca_variance.png'
+    )
+    plt.close()
+
+    # Store the fixed neighbor count in adata for reference
+    adata.uns['spatial_neighbors'] = {
+        'n_neighbors': n_neighbors
+    }
+
+    # Neighbors and UMAP with fixed n_neighbors
     sc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=n_pcs)
     sc.tl.umap(adata)
 
+    # Clustering
     sc.tl.louvain(
-        adata, key_added=ingest_state.cluster_key,
+        adata,
+        key_added=state.cluster_key,
         flavor='igraph',
         directed=False,
         resolution=cluster_res,
     )
-    # Convert they "clusters" column to type category
-    if adata.obs[ingest_state.cluster_key].dtype != 'category':
-        adata.obs[ingest_state.cluster_key] = adata.obs[ingest_state.cluster_key].astype('category')
-    sc.pl.umap(adata, color=ingest_state.cluster_key, wspace=0.5, save='_umap.png')
-    # Show the locations of the cells on spots
-    sc.pl.spatial(adata, img_key='hires', color=ingest_state.cluster_key, save='_clusters.png')
-    ingest_state.actions_taken.append('Clustered data')
-    return adata, ingest_state
+
+    # Convert clusters column to category
+    if adata.obs[state.cluster_key].dtype != 'category':
+        adata.obs[state.cluster_key] = adata.obs[state.cluster_key].astype('category')
+
+    # Plot UMAP
+    sc.pl.umap(
+        adata,
+        color=state.cluster_key,
+        wspace=0.5,
+        show=False,
+        save='_umap.png'
+    )
+    plt.close()
+
+    # Plot spatial
+    sc.pl.spatial(
+        adata,
+        img_key='hires',
+        color=state.cluster_key,
+        show=False,
+        save='_spatial_clusters.png'
+    )
+    plt.close()
+
+    state.actions_taken.append('Clustered data')
+    state.adata = adata
+    return state
 
 
-def calc_cancer_score(state: IngestState, adata: AnnData, file_name: str, ):
+def calc_cancer_score(state: IngestState, file_name: str, ):
     """
     Calculate cancer scores
 
+    :param file_name: name toi save result as
     :param state: Ingest state Object
-    :param adata: Anndata object for st
     :return:
     """
-    console.log("\n\n----- Labelling Cancerous cells -----\n\n")
+    console.print("\n\n----- Labelling Cancerous cells -----\n\n")
     table = Table(title='Cancer Scoring Results')
     table.add_column('Metric')
     table.add_column('Value', justify='center')
+    adata = state.adata
 
     cancer_genes = pd.read_csv('../cancer/cancer_gene_results.csv')
     # Get overlapping genes
@@ -198,7 +313,7 @@ def calc_cancer_score(state: IngestState, adata: AnnData, file_name: str, ):
     if not overlapping_genes:
         raise ValueError('No overlapping genes found between the two datasets')
 
-    console.log(f'Found {len(overlapping_genes)} overlapping genes in dataset')
+    console.print(f'Found {len(overlapping_genes)} overlapping genes in dataset')
     table.add_row('Overlapping genes', str(len(overlapping_genes)))
 
     # Create weights dictionary from confidence scores
@@ -253,48 +368,52 @@ def calc_cancer_score(state: IngestState, adata: AnnData, file_name: str, ):
     matched_genes = cancer_genes[cancer_genes['gene_name'].isin(adata.var.index)]
     print(len(matched_genes))
     state.actions_taken.append('Calculated Cancer scores for cells')
+    state.adata = adata
 
     adata.write_h5ad(Path(file_name))
     print(f'Saved file to {file_name}')
 
-    return adata, state
+    return state
 
 
-def get_high_cancer_regions(state: IngestState, adata: AnnData, percentile_threshold=75) -> tuple[
-    AnnData, pd.Series, IngestState]:
+def get_high_cancer_regions(state: IngestState, percentile_threshold=75) -> tuple[
+    pd.Series, IngestState]:
     """
     Identify regions with high cancer scores
     :param state: Ingest State object
-    :param adata: Anndata object for st
     :param percentile_threshold: percentile threshold for high scores
     :return:
     """
-    console.log("\n\n----- Determining highly cancerous regions -----\n\n")
+    console.print("\n\n----- Determining highly cancerous regions -----\n\n")
+    adata = state.adata
     if 'cancer_score' not in adata.obs:
         raise ValueError('Cancer scores not found. run the calc_cancer_score function first.')
 
     threshold = np.percentile(adata.obs['cancer_score'], percentile_threshold)
     high_scoring = adata.obs['cancer_score'] > threshold
 
-    console.log(f'Identified {high_scoring.sum()} spots above {percentile_threshold}% threshold',
-                f'(Score > {threshold:.3f})')
+    console.print(f'Identified {high_scoring.sum()} spots above {percentile_threshold}% threshold',
+                  f'(Score > {threshold:.3f})')
 
-    return adata, high_scoring, state
+    return high_scoring, state
 
 
-def get_top_cancer_genes(state: IngestState, adata: AnnData, high_scoring_mask: pd.Series,
-                         n_genes: int = 20) -> tuple[AnnData, pd.DataFrame, IngestState]:
+def get_top_cancer_genes(state: IngestState, high_scoring_mask: pd.Series,
+                         n_genes: int = 20) -> tuple[pd.DataFrame, IngestState]:
     """
     Identify top differentially expressed genes in high-scoring regions
 
     :param state: Ingest State object
-    :param adata: AnnData object of st data
     :param high_scoring_mask: Boolean mask of high-scoring regions
     :param n_genes: Number of top genes to return
     :return: Dataframe with gene statistics
     """
+    adata = state.adata
     if "cancer_score_genes" not in adata.uns:
         raise ValueError('Cancer gene information not found. Run calc_cancer_score first.')
+
+    # Ensure scanpy uses the correct figure directory
+    sc.settings.figdir = state.figures_dir
 
     # Create grouping for differential expression
     adata.obs['scoring_group'] = 'low'
@@ -304,14 +423,19 @@ def get_top_cancer_genes(state: IngestState, adata: AnnData, high_scoring_mask: 
     sc.tl.rank_genes_groups(adata, 'scoring_group', method='wilcoxon')
 
     # Get results
-    sc.tl.rank_genes_groups(adata, 'scoring_group', method='wilcoxon')
-
     result = sc.get.rank_genes_groups_df(adata, group='high')
 
-    sc.pl.rank_genes_groups(adata, n_genes=10, save=True)
+    # Plot ranked genes
+    sc.pl.rank_genes_groups(
+        adata,
+        n_genes=10,
+        save='_ranked_genes.png'
+    )
+    plt.close()
 
     # Check if gene was in cancer_gene set
     cancer_genes = set(adata.uns['cancer_score_genes']['genes'])
     result['is_cancer_gene'] = result['names'].isin(cancer_genes)
+    state.adata = adata
 
-    return adata, result.head(n_genes), state
+    return result.head(n_genes), state

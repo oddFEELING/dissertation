@@ -1,0 +1,43 @@
+# Model Configuration
+model_config:
+  hidden_size: 768
+  num_hidden_layers: 12
+  num_attention_heads: 12
+  intermediate_size: 3072
+  hidden_dropout_prob: 0.1
+  attention_probs_dropout_prob: 0.1
+
+# Data Preparation
+data_prep:
+  use_pca: true
+  max_dist: 100.0 # Maximum distance between neighbors
+  max_neighbors: 12 # Maximum number of neighbors per spot
+
+# Training Configuration
+training:
+  batch_size: 16
+  learning_rate: 1e-4
+  num_epochs: 10
+  val_split: 0.2
+
+  # Feature weights for loss computation
+  feature_weights:
+    cancer_score: 2.0 # Higher weight for cancer score prediction
+    total_counts: 1.0
+    n_genes: 1.0
+    pct_counts_mito: 1.5
+    pct_counts_ribo: 1.5
+    total_counts_mito: 1.0
+    total_counts_ribo: 1.0
+
+# Evaluation Configuration
+evaluation:
+  batch_size: 32
+  confidence_threshold: 0.5 # Minimum confidence for predictions
+
+  # Thresholds for different metrics
+  thresholds:
+    location: 2.0 # Maximum distance error in spatial units
+    interaction: 0.7 # Minimum interaction strength
+    feature_match: 0.1 # Maximum relative error for feature matching
+    gene_expression: 0.5 # Threshold for gene expression prediction

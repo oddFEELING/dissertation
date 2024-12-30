@@ -1,0 +1,52 @@
+Loading and preparing data...
+Loading data...
+Found 846 cancer genes in AnnData Object
+Processing distance information...
+Average neighbors per spot: 12.00
+Max neighbors in dataset: 12
+Min neighbors in dataset: 12
+Processing spatial context...
+Traceback (most recent call last):
+  File "C:\Users\alawo\Documents\School\proj\src\bert\main.py", line 277, in <module>
+    main()
+  File "C:\Users\alawo\Documents\School\proj\src\bert\main.py", line 266, in main
+    train()
+  File "C:\Users\alawo\Documents\School\proj\src\bert\main.py", line 123, in train
+    data_prep = TransformerDataPrep(
+  File "C:\Users\alawo\Documents\School\proj\src\bert\data_prep.py", line 46, in __init__
+    self._process_spatial_context()  # Advanced spatial features
+  File "C:\Users\alawo\Documents\School\proj\src\bert\data_prep.py", line 168, in _process_spatial_context
+    border_prob = np.array([
+  File "C:\Users\alawo\Documents\School\proj\src\bert\data_prep.py", line 169, in <listcomp>
+    len(np.where(distances[i] > np.median(distances))[0]) / len(distances[i])
+  File "C:\Users\alawo\Documents\School\proj\.venv\lib\site-packages\numpy\lib\_function_base_impl.py", line 3876, in median
+    return _ureduce(a, func=_median, keepdims=keepdims, axis=axis, out=out,
+  File "C:\Users\alawo\Documents\School\proj\.venv\lib\site-packages\numpy\lib\_function_base_impl.py", line 3764, in _ureduce
+    r = func(a, **kwargs)
+  File "C:\Users\alawo\Documents\School\proj\.venv\lib\site-packages\numpy\lib\_function_base_impl.py", line 3909, in _median
+    part = partition(a, kth, axis=axis)
+  File "C:\Users\alawo\Documents\School\proj\.venv\lib\site-packages\numpy\_core\fromnumeric.py", line 820, in partition
+    a.partition(kth, axis=axis, kind=kind, order=order)
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "C:\Users\alawo\Documents\School\proj\src\bert\main.py", line 277, in <module>
+    main()
+  File "C:\Users\alawo\Documents\School\proj\src\bert\main.py", line 266, in main
+    train()
+  File "C:\Users\alawo\Documents\School\proj\src\bert\main.py", line 123, in train
+    data_prep = TransformerDataPrep(
+  File "C:\Users\alawo\Documents\School\proj\src\bert\data_prep.py", line 46, in __init__
+    self._process_spatial_context()  # Advanced spatial features
+  File "C:\Users\alawo\Documents\School\proj\src\bert\data_prep.py", line 168, in _process_spatial_context
+    border_prob = np.array([
+  File "C:\Users\alawo\Documents\School\proj\src\bert\data_prep.py", line 169, in <listcomp>
+    len(np.where(distances[i] > np.median(distances))[0]) / len(distances[i])
+  File "C:\Users\alawo\Documents\School\proj\.venv\lib\site-packages\numpy\lib\_function_base_impl.py", line 3876, in median
+    return _ureduce(a, func=_median, keepdims=keepdims, axis=axis, out=out,
+  File "C:\Users\alawo\Documents\School\proj\.venv\lib\site-packages\numpy\lib\_function_base_impl.py", line 3764, in _ureduce
+    r = func(a, **kwargs)
+  File "C:\Users\alawo\Documents\School\proj\.venv\lib\site-packages\numpy\lib\_function_base_impl.py", line 3909, in _median
+    part = partition(a, kth, axis=axis)
+  File "C:\Users\alawo\Documents\School\proj\.venv\lib\site-packages\numpy\_core\fromnumeric.py", line 820, in partition
+    a.partition(kth, axis=axis, kind=kind, order=order)
+KeyboardInterrupt
