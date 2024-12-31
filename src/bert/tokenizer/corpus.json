@@ -1,28 +1,29 @@
 {
-  "total_sequences": 21,
+  "total_sequences": 3000,
   "tissue_types": {
-    "lung_cancer": 21
+    "lung_cancer": 3000
   },
-  "avg_cancer_score": 0.6347631617467216,
+  "avg_cancer_score": 0.6387754884781267,
   "mito_distribution": {
-    "high": 5,
-    "med": 13,
-    "low": 3
+    "high": 853,
+    "med": 2104,
+    "low": 43
   },
   "border_distribution": {
-    "border": 0,
-    "non_border": 21
+    "border": 276,
+    "non_border": 2724
   },
   "token_statistics": {
-    "[TISSUE]": 21,
-    "[SPATIAL]": 21,
-    "[CANCER]": 21,
-    "[IS_BORDER]": 0,
-    "[NOT_BORDER]": 21,
-    "[GENE]": 105,
-    "[REACT]": 21,
-    "[NEIGHBOR][MITO_HIGH]": 0,
-    "[MITO_MED]": 13,
-    "[MITO_LOW]": 3
+    "[TISSUE]": 3000,
+    "[SPATIAL]": 3000,
+    "[CANCER]": 3000,
+    "[IS_BORDER]": 276,
+    "[NOT_BORDER]": 2724,
+    "[GENE]": 15000,
+    "[REACT]": 3000,
+    "[NEIGHBOR]": 15000,
+    "[MITO_HIGH]": 853,
+    "[MITO_MED]": 2104,
+    "[MITO_LOW]": 43
   }
 }

@@ -21,20 +21,34 @@ class SpatialMLMDataset(Dataset):
         self.mask_probability = mask_probability
         self.device = device
 
+        tokens = self.sequences[0].split()
+        input_ids = self.tokenizer.tokenizer.convert_tokens_to_ids(tokens)
+        print("\nFirst few token IDs:", input_ids[:10])
+        # Print first sequence for debugging
+        print("\nExample sequence:")
+        print(self.sequences[0])
+
     def __len__(self):
         return len(self.sequences)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        sequence = self.sequences[idx]
+        input_ids, attention_mask, labels = self.mask_sequence(sequence)
+        return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
 
     def mask_sequence(self, sequence: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Apply masking to sequence for MLM"""
         tokens = sequence.split()
-        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        input_ids = self.tokenizer.tokenizer.convert_tokens_to_ids(tokens)
         labels = [-100] * len(input_ids)
         attention_mask = [1] * len(input_ids)
 
         # Find maskable positions (avoid special tokens)
         maskable_positions = []
         for i, token in enumerate(tokens):
-            if not token.startswith('[') and not token.endswith('##'):
+            if (not token.startswith('[') and
+                    not token.endswith(']') and
+                    not token.startswith('gene_')):
                 maskable_positions.append(i)
 
         # Randomly mask tokens
@@ -44,9 +58,9 @@ class SpatialMLMDataset(Dataset):
 
             for pos in mask_positions:
                 labels[pos] = input_ids[pos]
-                input_ids[pos] = self.tokenizer.mask_token_id
+                input_ids[pos] = self.tokenizer.tokenizer.mask_token_id
 
-        return (torch.tensor(input_ids, devicde=self.device),
+        return (torch.tensor(input_ids, device=self.device),
                 torch.tensor(attention_mask, device=self.device),
                 (torch.tensor(labels, device=self.device)))
 
@@ -104,7 +118,7 @@ class SpatialDataModule:
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.num_workers
+            num_workers=0,
         )
 
     def val_dataloader(self):
@@ -112,7 +126,7 @@ class SpatialDataModule:
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=4
+            num_workers=0
         )
 
     def test_dataloader(self):
@@ -120,5 +134,5 @@ class SpatialDataModule:
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=4
+            num_workers=0
         )

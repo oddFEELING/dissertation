@@ -87,27 +87,25 @@ class DataPrep:
         border_cells = self._is_border_cell(90, 10)
 
         for i in track(range(len(self.adata.var['dispersions_norm'])), description='--> Building features... '):
-            while i < 6:
-                # Calculate top variable genee
-                top_genes = self._get_hvg_per_cell(i, 5)
-                neighbors = self._get_cell_neighbors(i, 5)
+            # Calculate top variable genee
+            top_genes = self._get_hvg_per_cell(i, 5)
+            neighbors = self._get_cell_neighbors(i, 5)
 
-                features.append(
-                    ModelFeatures(
-                        tissue_type=self.adata.obs['tissue_type'][i],
-                        spatial_coords=self.spatial_coords[i],
-                        cancer_score=self.adata.obs['cancer_score'][i],
-                        top_var_genes=[VariableGene(gene_name=hvgene[0],
-                                                    expression_level=hvgene[1],
-                                                    dispersion_level=hvgene[2])
-                                       for hvgene in top_genes],
-                        cell_reactivity=reactivities[i],
-                        is_border=border_cells[i],
-                        neighbor_interactivities=neighbors,
-                        mito_activity=self.adata.obs['pct_counts_mito'][i],
-                    )
+            features.append(
+                ModelFeatures(
+                    tissue_type=self.adata.obs['tissue_type'][i],
+                    spatial_coords=self.spatial_coords[i],
+                    cancer_score=self.adata.obs['cancer_score'][i],
+                    top_var_genes=[VariableGene(gene_name=hvgene[0],
+                                                expression_level=hvgene[1],
+                                                dispersion_level=hvgene[2])
+                                   for hvgene in top_genes],
+                    cell_reactivity=reactivities[i],
+                    is_border=border_cells[i],
+                    neighbor_interactivities=neighbors,
+                    mito_activity=self.adata.obs['pct_counts_mito'][i],
                 )
-                i += 1
+            )
 
         return features
 
