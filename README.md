@@ -1,6 +1,7 @@
 # Spatial Transcriptomics BERT Model
 
-A BERT-based model for analyzing spatial transcriptomics data, predicting cell-cell communication, and understanding spatial gene expression patterns.
+A BERT-based model for analyzing spatial transcriptomics data, predicting cell-cell communication, and understanding
+spatial gene expression patterns.
 
 ## Table of Contents
 
@@ -8,10 +9,10 @@ A BERT-based model for analyzing spatial transcriptomics data, predicting cell-c
 - [Data Preparation](#data-preparation)
 - [Pipeline Overview](#pipeline-overview)
 - [Usage Guide](#usage-guide)
-  - [Data Ingestion](#data-ingestion)
-  - [Data Preprocessing](#data-preprocessing)
-  - [Tokenization](#tokenization)
-  - [Training](#training)
+    - [Data Ingestion](#data-ingestion)
+    - [Data Preprocessing](#data-preprocessing)
+    - [Tokenization](#tokenization)
+    - [Training](#training)
 - [Model Architecture](#model-architecture)
 - [Output Format](#output-format)
 - [Neighbor Predictions](#neighbor-predictions)
@@ -133,7 +134,7 @@ This step:
 Convert biological data into tokens for BERT:
 
 ```python
-from src.bert.new_tokeniser import IncrementalTissueTokenizer
+from src.bert.tokenizer.tokeniser import IncrementalTissueTokenizer
 
 # Initialize tokenizer
 tokenizer = IncrementalTissueTokenizer()
@@ -272,7 +273,8 @@ This array-based approach:
 
 ## Neighbor Predictions
 
-The model predicts all possible neighbors within a configurable radius for each spot, using a radial approach rather than fixed directions. This allows for more natural and comprehensive cell-cell interaction modeling.
+The model predicts all possible neighbors within a configurable radius for each spot, using a radial approach rather
+than fixed directions. This allows for more natural and comprehensive cell-cell interaction modeling.
 
 ### Neighborhood Definition
 
@@ -323,10 +325,10 @@ The neighborhood prediction can be configured through parameters:
 ```python
 model = CellMetaBERT(
     feature_info=processed_data['feature_info'],
-    max_neighbors=12,          # Maximum number of neighbors to predict
-    distance_threshold=100,    # Maximum distance in microns
-    min_neighbors=3,          # Minimum neighbors to consider
-    use_knn=True,            # Use K-nearest neighbors for initial filtering
+    max_neighbors=12,  # Maximum number of neighbors to predict
+    distance_threshold=100,  # Maximum distance in microns
+    min_neighbors=3,  # Minimum neighbors to consider
+    use_knn=True,  # Use K-nearest neighbors for initial filtering
     debug=True
 )
 ```
@@ -358,7 +360,7 @@ prediction = {
         'neighbor_1': {
             'spot_id': 124,
             'distance': 45.2,
-            'angle': 45.6,        # Angle in degrees from reference
+            'angle': 45.6,  # Angle in degrees from reference
             'interaction_strength': 0.85,
             'features': {
                 'cancer_score': 0.76,

@@ -1,168 +1,269 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Tuple
 import logging
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
 class SpatialBertLoss:
-    """Loss computation for CellMetaBERT with biological focus"""
+    """Loss function for CellMetaBERT model"""
     
-    def __init__(self, feature_weights=None, loss_weights=None, use_spatial_context=True, 
-                 use_gene_context=True, use_cell_state=True):
-        self.use_spatial_context = use_spatial_context
-        self.use_gene_context = use_gene_context
-        self.use_cell_state = use_cell_state
-        self.feature_weights = feature_weights or {}
+    def __init__(
+        self,
+        feature_weights: Dict[str, float] = None,
+        loss_weights: Dict[str, float] = None
+    ):
+        self.feature_weights = feature_weights or {
+            'cancer_score': 2.0,
+            'n_genes': 1.0,
+            'pct_counts_mito': 1.5,
+            'pct_counts_ribo': 1.5,
+            'total_counts': 1.0,
+            'total_counts_mito': 1.0,
+            'total_counts_ribo': 1.0
+        }
+        
         self.loss_weights = loss_weights or {
             'neighbor': 1.0,
             'feature': 1.0,
-            'gene_expression': 1.0,
-            'spatial_context': 1.0,
-            'cell_state': 1.0,
-            'confidence': 1.0
+            'spatial_context': 1.5
         }
         
         # MSE loss for continuous values
-        self.mse = nn.MSELoss()
-        # BCE loss for binary values
-        self.bce = nn.BCELoss()
-        # Cross entropy for multi-class
-        self.ce = nn.CrossEntropyLoss()
+        self.mse_loss = nn.MSELoss(reduction='none')
         
-    def compute_neighbor_loss(self, predictions, targets):
-        """Compute loss for neighbor predictions"""
-        losses = {}
+    def _validate_shapes(self, predictions: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]):
+        """Validate input shapes and log debug information"""
+        # Log shapes for debugging
+        logger.debug("Prediction shapes:")
+        for k, v in predictions.items():
+            logger.debug(f"  {k}: {v.shape}")
         
-        if 'neighbor_location_target' in targets:
-            losses['location'] = self.mse(
-                predictions['neighbor_location'],
-                targets['neighbor_location_target']
-            )
+        logger.debug("Batch shapes:")
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                logger.debug(f"  {k}: {v.shape}")
         
-        if 'neighbor_distance_target' in targets:
-            losses['distance'] = self.mse(
-                predictions['neighbor_distance'],
-                targets['neighbor_distance_target']
-            )
+        # Basic shape validation
+        assert 'neighbor_preds' in predictions, "Missing neighbor predictions"
+        assert 'feature_preds' in predictions, "Missing feature predictions"
+        assert 'confidence' in predictions, "Missing confidence scores"
         
-        if 'interaction_strength_target' in targets:
-            losses['interaction'] = self.bce(
-                predictions['interaction_strength'],
-                targets['interaction_strength_target']
-            )
+        assert 'neighbor_features' in batch, "Missing neighbor features in batch"
+        assert 'features' in batch, "Missing features in batch"
+        assert 'neighbor_mask' in batch, "Missing neighbor mask in batch"
+        
+        # Shape validation
+        batch_size = predictions['neighbor_preds'].size(0)
+        max_neighbors = predictions['neighbor_preds'].size(1)
+        feature_dim = predictions['neighbor_preds'].size(2)
+        
+        assert batch['neighbor_features'].size(0) == batch_size, \
+            f"Batch size mismatch: {batch['neighbor_features'].size(0)} vs {batch_size}"
+        assert batch['neighbor_features'].size(2) == feature_dim, \
+            f"Feature dimension mismatch: {batch['neighbor_features'].size(2)} vs {feature_dim}"
             
-        return sum(losses.values()) / len(losses) if losses else 0.0
+        return batch_size, max_neighbors, feature_dim
     
-    def compute_spatial_context_loss(self, predictions, targets):
-        """Compute loss for spatial context predictions"""
-        losses = {}
+    def _compute_neighbor_loss(
+        self,
+        pred_neighbors: torch.Tensor,  # [B, max_n, F]
+        true_neighbors: torch.Tensor,  # [B, n, F]
+        neighbor_mask: torch.Tensor    # [B, n]
+    ) -> torch.Tensor:
+        """Compute neighbor prediction loss with proper masking"""
+        batch_size = pred_neighbors.size(0)
+        max_neighbors = pred_neighbors.size(1)
+        num_neighbors = true_neighbors.size(1)
         
-        if 'local_density_target' in targets:
-            losses['density'] = self.mse(
-                predictions['local_density'],
-                targets['local_density_target']
+        # Pad true neighbors to match prediction size
+        if num_neighbors < max_neighbors:
+            padding = torch.zeros(
+                batch_size,
+                max_neighbors - num_neighbors,
+                true_neighbors.size(2),
+                device=true_neighbors.device
             )
+            true_neighbors = torch.cat([true_neighbors, padding], dim=1)
+            # Extend mask
+            mask_padding = torch.zeros(
+                batch_size,
+                max_neighbors - num_neighbors,
+                device=neighbor_mask.device
+            )
+            neighbor_mask = torch.cat([neighbor_mask, mask_padding], dim=1)
+        else:
+            # Truncate if necessary
+            true_neighbors = true_neighbors[:, :max_neighbors, :]
+            neighbor_mask = neighbor_mask[:, :max_neighbors]
         
-        if 'local_heterogeneity_target' in targets:
-            losses['heterogeneity'] = self.mse(
-                predictions['local_heterogeneity'],
-                targets['local_heterogeneity_target']
-            )
+        # Compute MSE loss
+        neighbor_loss = self.mse_loss(pred_neighbors, true_neighbors)  # [B, max_n, F]
         
-        if 'border_probability_target' in targets:
-            losses['border'] = self.bce(
-                predictions['border_probability'],
-                targets['border_probability_target']
+        # Apply feature weights if available
+        if hasattr(self, 'feature_weights'):
+            feature_weights = torch.tensor(
+                [self.feature_weights.get(f, 1.0) for f in range(neighbor_loss.size(-1))],
+                device=neighbor_loss.device
             )
-            
-        return sum(losses.values()) / len(losses) if losses else 0.0
+            neighbor_loss = neighbor_loss * feature_weights
+        
+        # Average over features
+        neighbor_loss = neighbor_loss.mean(dim=-1)  # [B, max_n]
+        
+        # Apply neighbor mask
+        neighbor_mask = neighbor_mask.float()
+        masked_loss = neighbor_loss * neighbor_mask
+        
+        # Average over non-masked neighbors
+        final_loss = masked_loss.sum() / (neighbor_mask.sum() + 1e-8)
+        
+        return final_loss
     
-    def compute_feature_loss(self, predictions, targets):
-        """Compute weighted loss for feature predictions"""
-        if 'features_target' not in targets:
-            return 0.0
-            
-        feature_loss = 0.0
-        n_features = 0
+    def _compute_feature_loss(
+        self,
+        pred_features: torch.Tensor,  # [B, F]
+        true_features: torch.Tensor,  # [B, F]
+        confidence: torch.Tensor      # [B, 1]
+    ) -> torch.Tensor:
+        """Compute feature prediction loss with confidence weighting"""
+        # Compute MSE loss
+        feature_loss = self.mse_loss(pred_features, true_features)  # [B, F]
         
-        pred_features = predictions['features']
-        target_features = targets['features_target']
-        
-        for i, feature_name in enumerate(self.feature_weights.keys()):
-            weight = self.feature_weights.get(feature_name, 1.0)
-            feature_loss += weight * self.mse(
-                pred_features[:, i],
-                target_features[:, i]
+        # Apply feature weights if available
+        if hasattr(self, 'feature_weights'):
+            feature_weights = torch.tensor(
+                [self.feature_weights.get(f, 1.0) for f in range(feature_loss.size(-1))],
+                device=feature_loss.device
             )
-            n_features += 1
-            
-        return feature_loss / n_features if n_features > 0 else 0.0
+            feature_loss = feature_loss * feature_weights
+        
+        # Average over features
+        feature_loss = feature_loss.mean(dim=-1)  # [B]
+        
+        # Apply confidence weighting
+        confidence = confidence.squeeze(-1)  # [B]
+        weighted_loss = feature_loss * confidence
+        
+        # Average over batch
+        final_loss = weighted_loss.mean()
+        
+        return final_loss
     
-    def compute_cell_state_loss(self, predictions, targets):
-        """Compute loss for cell state predictions"""
-        losses = {}
-        
-        state_components = [
-            'cell_cycle_score', 's_score', 'g2m_score', 'stress_score'
-        ]
-        
-        for component in state_components:
-            target_key = f'{component}_target'
-            if target_key in targets:
-                losses[component] = self.bce(
-                    predictions[component],
-                    targets[target_key]
-                )
+    def _compute_metrics(
+        self,
+        predictions: Dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
+        neighbor_loss: torch.Tensor,
+        feature_loss: torch.Tensor
+    ) -> Dict[str, float]:
+        """Compute additional metrics for monitoring"""
+        with torch.no_grad():
+            metrics = {
+                'neighbor_loss': neighbor_loss.item(),
+                'feature_loss': feature_loss.item(),
+                'total_loss': (
+                    self.loss_weights['neighbor'] * neighbor_loss +
+                    self.loss_weights['feature'] * feature_loss
+                ).item(),
+                'mean_confidence': predictions['confidence'].mean().item()
+            }
+            
+            # Compute accuracy metrics
+            neighbor_accuracy = self._compute_neighbor_accuracy(
+                predictions['neighbor_preds'],
+                batch['neighbor_features'],
+                batch['neighbor_mask']
+            )
+            metrics.update(neighbor_accuracy)
+            
+            feature_accuracy = self._compute_feature_accuracy(
+                predictions['feature_preds'],
+                batch['features']
+            )
+            metrics.update(feature_accuracy)
+            
+        return metrics
+    
+    def _compute_neighbor_accuracy(
+        self,
+        pred_neighbors: torch.Tensor,
+        true_neighbors: torch.Tensor,
+        neighbor_mask: torch.Tensor,
+        thresholds: Dict[str, float] = {'low': 0.1, 'medium': 0.2, 'high': 0.3}
+    ) -> Dict[str, float]:
+        """Compute neighbor prediction accuracy at different thresholds"""
+        with torch.no_grad():
+            # Normalize predictions and targets
+            pred_norm = F.normalize(pred_neighbors, dim=-1)
+            true_norm = F.normalize(true_neighbors, dim=-1)
+            
+            # Compute cosine similarity
+            similarity = torch.sum(pred_norm * true_norm, dim=-1)  # [B, N]
+            
+            # Apply mask
+            masked_similarity = similarity * neighbor_mask.float()
+            
+            # Compute accuracy at different thresholds
+            metrics = {}
+            for name, threshold in thresholds.items():
+                correct = (masked_similarity > threshold).float() * neighbor_mask.float()
+                accuracy = correct.sum() / (neighbor_mask.sum() + 1e-8)
+                metrics[f'neighbor_accuracy_{name}'] = accuracy.item()
                 
-        return sum(losses.values()) / len(losses) if losses else 0.0
+        return metrics
     
-    def compute_gene_expression_loss(self, predictions, targets):
-        """Compute loss for gene expression predictions"""
-        if 'gene_expression_target' not in targets:
-            return 0.0
+    def _compute_feature_accuracy(
+        self,
+        pred_features: torch.Tensor,
+        true_features: torch.Tensor,
+        threshold: float = 0.2
+    ) -> Dict[str, float]:
+        """Compute feature prediction accuracy"""
+        with torch.no_grad():
+            # Normalize predictions and targets
+            pred_norm = F.normalize(pred_features, dim=-1)
+            true_norm = F.normalize(true_features, dim=-1)
             
-        return self.bce(
-            predictions['gene_expression_probs'],
-            targets['gene_expression_target']
-        )
+            # Compute cosine similarity
+            similarity = torch.sum(pred_norm * true_norm, dim=-1)  # [B]
+            
+            # Compute accuracy
+            accuracy = (similarity > threshold).float().mean()
+            
+            return {'feature_accuracy': accuracy.item()}
     
-    def compute_confidence_loss(self, predictions, targets):
-        """Compute loss for confidence scores"""
-        if 'confidence_target' not in targets:
-            return 0.0
+    def __call__(self, predictions: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> tuple:
+        """Compute total loss and metrics"""
+        try:
+            # Validate shapes and get dimensions
+            batch_size, max_neighbors, feature_dim = self._validate_shapes(predictions, batch)
             
-        return self.bce(
-            predictions['confidence_scores'],
-            targets['confidence_target']
-        )
-    
-    def compute_loss(self, predictions, targets):
-        """Compute total loss with all components"""
-        losses = {}
-        
-        # Basic losses
-        losses['neighbor'] = self.compute_neighbor_loss(predictions, targets) * self.loss_weights.get('neighbor', 1.0)
-        losses['feature'] = self.compute_feature_loss(predictions, targets) * self.loss_weights.get('feature', 1.0)
-        losses['gene_expression'] = self.compute_gene_expression_loss(predictions, targets) * self.loss_weights.get('gene_expression', 1.0)
-        losses['confidence'] = self.compute_confidence_loss(predictions, targets) * self.loss_weights.get('confidence', 1.0)
-        
-        # Additional biological context losses
-        if self.use_spatial_context:
-            losses['spatial_context'] = self.compute_spatial_context_loss(predictions, targets) * self.loss_weights.get('spatial_context', 1.0)
+            # Compute individual losses
+            neighbor_loss = self._compute_neighbor_loss(
+                predictions['neighbor_preds'],
+                batch['neighbor_features'],
+                batch['neighbor_mask']
+            )
             
-        if self.use_cell_state:
-            losses['cell_state'] = self.compute_cell_state_loss(predictions, targets) * self.loss_weights.get('cell_state', 1.0)
-        
-        # Convert any float losses to tensors
-        losses = {k: torch.tensor(v, device=next(iter(predictions.values())).device, requires_grad=True) 
-                 if isinstance(v, float) else v for k, v in losses.items()}
-        
-        # Compute total loss
-        total_loss = sum(losses.values())
-        
-        # Store individual losses for logging
-        losses['total'] = total_loss
-        
-        return total_loss, losses
+            feature_loss = self._compute_feature_loss(
+                predictions['feature_preds'],
+                batch['features'],
+                predictions['confidence']
+            )
+            
+            # Compute total loss
+            total_loss = (
+                self.loss_weights['neighbor'] * neighbor_loss +
+                self.loss_weights['feature'] * feature_loss
+            )
+            
+            # Compute metrics
+            metrics = self._compute_metrics(predictions, batch, neighbor_loss, feature_loss)
+            
+            return total_loss, metrics
+            
+        except Exception as e:
+            logger.error(f"Error computing total loss: {str(e)}")
+            raise

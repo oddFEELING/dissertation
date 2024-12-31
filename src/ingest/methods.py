@@ -204,7 +204,7 @@ def perform_qc(state: IngestState, mito_threshold=20, ribo_threshold=20, cell_th
         sc.pp.log1p(adata)
     # freeze current state of adata into new field of anndata
     adata.raw = adata
-    sc.pp.highly_variable_genes(adata, flavor='seurat', n_top_genes=n_top_genes, inplace=True)
+    sc.pp.highly_variable_genes(adata, flavor='seurat', n_top_genes=n_top_genes, inplace=True, subset=True)
     adata = adata[:, adata.var.highly_variable]
     table.add_row('Remaining Cell count', str(len(adata.obs_names)))
     table.add_row('Remaining Gene count', str(len(adata.var_names)))
@@ -359,10 +359,12 @@ def calc_cancer_score(state: IngestState, file_name: str, ):
     console.print(table)
 
     # Add gene weights to adata for referencing
-    adata.uns['cancer_score_genes'] = {
-        "genes": overlapping_genes,
-        "weights": [gene_weights[g] for g in overlapping_genes]
-    }
+    adata.uns['cancer_score_genes'] = [[gene, gene_weights[gene]] for gene in overlapping_genes]
+
+    #     {
+    #     "genes": overlapping_genes,
+    #     "weights": [gene_weights[g] for g in overlapping_genes]
+    # }
     adata.uns['present_cancer_genes'] = overlapping_genes  # Cancer genes present in dataset
 
     matched_genes = cancer_genes[cancer_genes['gene_name'].isin(adata.var.index)]
@@ -434,8 +436,8 @@ def get_top_cancer_genes(state: IngestState, high_scoring_mask: pd.Series,
     plt.close()
 
     # Check if gene was in cancer_gene set
-    cancer_genes = set(adata.uns['cancer_score_genes']['genes'])
-    result['is_cancer_gene'] = result['names'].isin(cancer_genes)
+    cancer_genes = set(adata.uns['cancer_score_genes'])
+    result['is_cancer_gene'] = result[0].isin(cancer_genes)
     state.adata = adata
 
     return result.head(n_genes), state

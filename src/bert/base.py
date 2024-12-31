@@ -1,310 +1,300 @@
 import torch
 import torch.nn as nn
-from transformers import BertPreTrainedModel, BertModel
-from typing import Dict, Optional, Tuple
+from transformers import BertModel
 import logging
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
-
-class CellMetaBERT(BertPreTrainedModel):
-    """BERT-based model for spatial transcriptomics analysis with biological focus"""
-
-    def __init__(self, config, feature_info: Dict, debug: bool = False):
-        super().__init__(config)
-        self.debug = debug
-
-        # Load pre-trained BERT
-        self.bert = BertModel.from_pretrained('bert-base-uncased')
-
-        # Feature dimensions
-        self.feature_names = feature_info['feature_names']['features']
-        self.n_features = len(self.feature_names)
-        self.hvg_names = feature_info['feature_names'].get('hvg_names', [])
+class CellMetaBERT(nn.Module):
+    """
+    BERT-based model for spatial transcriptomics analysis with a focus on cell-cell communication.
+    Uses gene expressions as input features during training but does not predict them.
+    """
+    
+    def __init__(
+        self,
+        bert_model_name="bert-base-uncased",
+        feature_dim=128,
+        spatial_dim=2,
+        max_neighbors=10,
+        gene_vocab_size=None,
+        device="cuda",
+        feature_names=None
+    ):
+        super().__init__()
+        self.device = device
+        self.max_neighbors = max_neighbors
+        self.feature_dim = feature_dim
+        self.spatial_dim = spatial_dim
+        self.feature_names = feature_names or [f"feature_{i}" for i in range(feature_dim)]
         
-        # Store feature statistics for normalization
-        self.register_buffer('feature_means',
-                             torch.tensor([feature_info['feature_stats'][name]['mean'] for name in self.feature_names]))
-        self.register_buffer('feature_stds',
-                             torch.tensor([feature_info['feature_stats'][name]['std'] for name in self.feature_names]))
+        # Load pre-trained BERT model
+        self.bert = BertModel.from_pretrained(bert_model_name)
+        self.bert_dim = self.bert.config.hidden_size
         
-        # Store spatial context statistics
-        if 'spatial_context' in feature_info:
-            self.register_buffer('density_mean',
-                               torch.tensor(feature_info['spatial_context']['local_density_stats']['mean']))
-            self.register_buffer('density_std',
-                               torch.tensor(feature_info['spatial_context']['local_density_stats']['std']))
-            self.register_buffer('heterogeneity_mean',
-                               torch.tensor(feature_info['spatial_context']['heterogeneity_stats']['mean']))
-            self.register_buffer('heterogeneity_std',
-                               torch.tensor(feature_info['spatial_context']['heterogeneity_stats']['std']))
-        
-        # Prediction heads
-        hidden_size = config.hidden_size
-        
-        # Enhanced spatial projector with attention to local structure
-        self.spatial_projector = nn.Sequential(
-            nn.Linear(hidden_size + 2, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob)
+        # Spatial embedding layer with normalization
+        self.spatial_embedding = nn.Sequential(
+            nn.Linear(spatial_dim, self.bert_dim),
+            nn.LayerNorm(self.bert_dim)
         )
         
-        # Spatial context predictor
-        self.spatial_context_predictor = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(hidden_size // 2, 3)  # [local_density, heterogeneity, border_prob]
-        )
-        
-        # Enhanced neighbor predictor with interaction modeling
-        self.neighbor_predictor = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(hidden_size // 2, 4)  # [x, y, distance, interaction_strength]
-        )
-        
-        # Feature predictor with biological focus
-        self.feature_predictor = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(hidden_size // 2, self.n_features)
-        )
-        
-        # Cell state predictor
-        self.cell_state_predictor = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(hidden_size // 2, 4)  # [cell_cycle, s_score, g2m_score, stress]
-        )
-        
-        # Get gene expression dimensions from config
-        self.n_genes = config.n_genes if hasattr(config, 'n_genes') else 5000
-        self.n_cells = config.n_cells if hasattr(config, 'n_cells') else 3857
-        
-        # Memory-efficient gene expression predictor
-        self.gene_expression_predictor = nn.Sequential(
-            nn.Linear(hidden_size, 2048),
-            nn.LayerNorm(2048),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(2048, 1024),
-            nn.LayerNorm(1024),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(1024, self.n_genes),
-            nn.Sigmoid()
-        )
-        
-        # Enhanced confidence predictor
-        self.confidence_predictor = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.ReLU(),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(hidden_size // 2, 1),
-            nn.Sigmoid()
-        )
-
-    def normalize_features(self, features: torch.Tensor) -> torch.Tensor:
-        """Normalize features using stored statistics"""
-        return (features - self.feature_means) / (self.feature_stds + 1e-6)
-
-    def denormalize_features(self, features: torch.Tensor) -> torch.Tensor:
-        """Denormalize features back to original scale"""
-        return features * self.feature_stds + self.feature_means
-
-    def normalize_spatial_context(self, density: torch.Tensor, heterogeneity: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Normalize spatial context features"""
-        norm_density = (density - self.density_mean) / (self.density_std + 1e-6)
-        norm_heterogeneity = (heterogeneity - self.heterogeneity_mean) / (self.heterogeneity_std + 1e-6)
-        return norm_density, norm_heterogeneity
-
-    def forward(
-            self,
-            input_ids: torch.Tensor,
-            attention_mask: Optional[torch.Tensor] = None,
-            token_type_ids: Optional[torch.Tensor] = None,
-            spatial_coords: Optional[torch.Tensor] = None,
-            features: Optional[torch.Tensor] = None,
-            neighbor_indices: Optional[torch.Tensor] = None,
-            neighbor_distances: Optional[torch.Tensor] = None,
-            neighbor_coords: Optional[torch.Tensor] = None,
-            spatial_context: Optional[Dict[str, torch.Tensor]] = None,
-            cell_state: Optional[Dict[str, torch.Tensor]] = None,
-            original_features: Optional[torch.Tensor] = None,
-            original_gene_expression: Optional[torch.Tensor] = None,
-            return_dict: bool = True,
-            **kwargs
-    ) -> Dict:
-        # Get device from input tensor
-        device = input_ids.device
-        
-        # Move inputs to device if needed
-        attention_mask = attention_mask.to(device) if attention_mask is not None else None
-        token_type_ids = token_type_ids.to(device) if token_type_ids is not None else None
-        spatial_coords = spatial_coords.to(device) if spatial_coords is not None else None
-        features = features.to(device) if features is not None else None
-        
-        # Get BERT embeddings
-        outputs = self.bert(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            return_dict=True
-        )
-        
-        # Get pooled output
-        hidden_states = outputs.pooler_output
-        
-        # Incorporate spatial information if provided
-        if spatial_coords is not None:
-            # Normalize coordinates to [0, 1]
-            spatial_coords = spatial_coords / (torch.max(spatial_coords, dim=0)[0] + 1e-6)
-            # Concatenate with hidden states
-            hidden_states = torch.cat([hidden_states, spatial_coords], dim=-1)
-            # Project back to hidden size
-            hidden_states = self.spatial_projector(hidden_states)
-        
-        # Make predictions
-        predictions = {}
-        
-        # Spatial context predictions
-        spatial_context_preds = self.spatial_context_predictor(hidden_states)
-        predictions.update({
-            'local_density': spatial_context_preds[:, 0],
-            'local_heterogeneity': spatial_context_preds[:, 1],
-            'border_probability': torch.sigmoid(spatial_context_preds[:, 2])
-        })
-        
-        # Neighbor predictions
-        neighbor_preds = self.neighbor_predictor(hidden_states)
-        predictions.update({
-            'neighbor_location': neighbor_preds[:, :2],
-            'neighbor_distance': neighbor_preds[:, 2],
-            'interaction_strength': torch.sigmoid(neighbor_preds[:, 3])
-        })
-        
-        # Feature predictions
-        if features is not None:
-            features = self.normalize_features(features)
-        feature_preds = self.feature_predictor(hidden_states)
-        predictions['features'] = self.denormalize_features(feature_preds)
-        
-        # Cell state predictions
-        cell_state_preds = self.cell_state_predictor(hidden_states)
-        predictions.update({
-            'cell_cycle_score': torch.sigmoid(cell_state_preds[:, 0]),
-            's_score': torch.sigmoid(cell_state_preds[:, 1]),
-            'g2m_score': torch.sigmoid(cell_state_preds[:, 2]),
-            'stress_score': torch.sigmoid(cell_state_preds[:, 3])
-        })
-        
-        # Gene expression predictions
-        batch_size = hidden_states.shape[0]
-        gene_preds = self.gene_expression_predictor(hidden_states)
-        gene_preds = gene_preds.unsqueeze(1).expand(-1, self.n_cells, -1)
-        predictions['gene_expression_probs'] = gene_preds
-        
-        # Confidence scores
-        predictions['confidence_scores'] = self.confidence_predictor(hidden_states).squeeze(-1)
-        
-        # Add target values if provided
-        if spatial_context is not None:
-            predictions.update({
-                'local_density_target': spatial_context['local_density'],
-                'local_heterogeneity_target': spatial_context['local_heterogeneity'],
-                'border_probability_target': spatial_context['border_probability']
-            })
-        
-        if cell_state is not None:
-            predictions.update({
-                'cell_cycle_score_target': cell_state['cell_cycle_score'],
-                's_score_target': cell_state['s_score'],
-                'g2m_score_target': cell_state['g2m_score'],
-                'stress_score_target': cell_state['stress_score']
-            })
-        
-        if features is not None:
-            predictions['features_target'] = features
-        
-        if original_gene_expression is not None:
-            if isinstance(original_gene_expression, torch.Tensor):
-                # Normalize gene expression to [0, 1] range
-                gene_expr_min = original_gene_expression.min(dim=-1, keepdim=True)[0].min(dim=-1, keepdim=True)[0]
-                gene_expr_max = original_gene_expression.max(dim=-1, keepdim=True)[0].max(dim=-1, keepdim=True)[0]
-                normalized_gene_expr = (original_gene_expression - gene_expr_min) / (gene_expr_max - gene_expr_min + 1e-6)
-                predictions['gene_expression_target'] = normalized_gene_expr
-        
-        if not return_dict:
-            return (
-                predictions['neighbor_location'],
-                predictions['neighbor_distance'],
-                predictions['interaction_strength'],
-                predictions['features'],
-                predictions['gene_expression_probs'],
-                predictions['local_density'],
-                predictions['local_heterogeneity'],
-                predictions['border_probability'],
-                predictions['cell_cycle_score'],
-                predictions['confidence_scores']
+        # Gene expression embedding (for input only)
+        if gene_vocab_size:
+            self.gene_embedding = nn.Sequential(
+                nn.Linear(gene_vocab_size, self.bert_dim),
+                nn.LayerNorm(self.bert_dim)
             )
+        else:
+            self.gene_embedding = None
+            
+        # Combined predictor for neighbors and features
+        self.predictor = nn.Sequential(
+            nn.Linear(self.bert_dim, 512),
+            nn.LayerNorm(512),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Linear(256, 4 + feature_dim)  # [x, y, distance, interaction_strength, features...]
+        )
         
-        return predictions
-
+        # Simple confidence scorer with improved architecture
+        self.confidence_scorer = nn.Sequential(
+            nn.Linear(self.bert_dim, 128),
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, 1),
+            nn.Sigmoid()
+        )
+        
+        # Register buffers for input normalization
+        self.register_buffer('spatial_mean', torch.zeros(spatial_dim))
+        self.register_buffer('spatial_std', torch.ones(spatial_dim))
+        if gene_vocab_size:
+            self.register_buffer('gene_mean', torch.zeros(gene_vocab_size))
+            self.register_buffer('gene_std', torch.ones(gene_vocab_size))
+        
+        self.to(device)
+        
+    def _validate_input(self, batch):
+        """Validate input batch structure and dimensions"""
+        required_keys = ['spatial_coords']
+        for key in required_keys:
+            if key not in batch:
+                raise ValueError(f"Missing required key in batch: {key}")
+        
+        if batch['spatial_coords'].dim() != 3:
+            raise ValueError(f"Expected spatial_coords to be 3D, got {batch['spatial_coords'].dim()}D")
+        
+        if batch['spatial_coords'].size(-1) != self.spatial_dim:
+            raise ValueError(f"Expected spatial_coords to have size {self.spatial_dim} in last dimension")
+        
+        if 'gene_expression' in batch and self.gene_embedding is None:
+            logger.warning("Gene expression provided but model not configured for gene expression input")
+            
+    def _normalize_input(self, spatial_coords, gene_expression=None):
+        """Normalize input data using stored statistics"""
+        spatial_coords = (spatial_coords - self.spatial_mean) / (self.spatial_std + 1e-8)
+        
+        if gene_expression is not None and self.gene_embedding is not None:
+            gene_expression = (gene_expression - self.gene_mean) / (self.gene_std + 1e-8)
+            
+        return spatial_coords, gene_expression
+        
+    def _prepare_input_embeddings(self, spatial_coords, gene_expression=None):
+        """Prepare input embeddings combining spatial and gene expression data"""
+        # Normalize inputs
+        spatial_coords, gene_expression = self._normalize_input(spatial_coords, gene_expression)
+        
+        # Embed spatial coordinates
+        spatial_emb = self.spatial_embedding(spatial_coords)  # [batch_size, max_neighbors, bert_dim]
+        
+        if gene_expression is not None and self.gene_embedding is not None:
+            # Embed gene expression data
+            gene_emb = self.gene_embedding(gene_expression)  # [batch_size, max_neighbors, bert_dim]
+            # Combine embeddings with learned weighting
+            combined_emb = spatial_emb + gene_emb
+        else:
+            combined_emb = spatial_emb
+            
+        return combined_emb
+        
+    def forward(self, batch):
+        """
+        Forward pass returning predictions in the required schema format
+        
+        Args:
+            batch: Dictionary containing:
+                - spatial_coords: [batch_size, max_neighbors, 2]
+                - gene_expression (optional): [batch_size, max_neighbors, gene_vocab_size]
+                - neighbor_features: [batch_size, max_neighbors, feature_dim]
+                
+        Returns:
+            Dictionary containing:
+                - neighbor_predictions: [batch_size, max_neighbors, 4]  # [x, y, distance, interaction_strength]
+                - predicted_features: [batch_size, max_neighbors, feature_dim]
+                - feature_confidence: [batch_size, max_neighbors, 1]
+        """
+        try:
+            # Validate input
+            self._validate_input(batch)
+            batch_size = batch['spatial_coords'].size(0)
+            
+            # Prepare input embeddings
+            input_emb = self._prepare_input_embeddings(
+                batch['spatial_coords'],
+                batch.get('gene_expression', None)
+            )
+            
+            # Get BERT embeddings
+            attention_mask = torch.ones(batch_size, self.max_neighbors, device=self.device)
+            bert_output = self.bert(
+                inputs_embeds=input_emb,
+                attention_mask=attention_mask
+            )
+            hidden_states = bert_output.last_hidden_state  # [batch_size, max_neighbors, bert_dim]
+            
+            # Generate predictions
+            combined_predictions = self.predictor(hidden_states)  # [batch_size, max_neighbors, 4 + feature_dim]
+            
+            # Split predictions
+            neighbor_predictions = combined_predictions[..., :4]  # [x, y, distance, interaction_strength]
+            predicted_features = combined_predictions[..., 4:]  # [feature_dim]
+            
+            # Generate confidence scores
+            feature_confidence = self.confidence_scorer(hidden_states)
+            
+            return {
+                'neighbor_predictions': neighbor_predictions,
+                'predicted_features': predicted_features,
+                'feature_confidence': feature_confidence
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in forward pass: {str(e)}")
+            raise
+            
+    def format_predictions(self, predictions, batch):
+        """Format predictions for inference time use"""
+        try:
+            formatted_predictions = {}
+            batch_size = predictions['neighbor_predictions'].size(0)
+            
+            for i in range(batch_size):
+                spot_predictions = {
+                    'spot_id': batch.get('spot_ids', [i])[i],
+                    'neighbors': []
+                }
+                
+                for j in range(self.max_neighbors):
+                    neighbor = {
+                        'coordinates': {
+                            'x': predictions['neighbor_predictions'][i, j, 0].item(),
+                            'y': predictions['neighbor_predictions'][i, j, 1].item()
+                        },
+                        'distance': predictions['neighbor_predictions'][i, j, 2].item(),
+                        'interaction_strength': predictions['neighbor_predictions'][i, j, 3].item(),
+                        'features': {
+                            self.feature_names[k]: {
+                                'value': predictions['predicted_features'][i, j, k].item(),
+                                'confidence': predictions['feature_confidence'][i, j, 0].item()
+                            }
+                            for k in range(self.feature_dim)
+                        }
+                    }
+                    spot_predictions['neighbors'].append(neighbor)
+                
+                formatted_predictions[spot_predictions['spot_id']] = spot_predictions
+                
+            return formatted_predictions
+            
+        except Exception as e:
+            logger.error(f"Error formatting predictions: {str(e)}")
+            raise
+            
+    def update_normalization_stats(self, spatial_coords, gene_expression=None):
+        """Update normalization statistics based on input data"""
+        with torch.no_grad():
+            self.spatial_mean.copy_(spatial_coords.mean(dim=(0, 1)))
+            self.spatial_std.copy_(spatial_coords.std(dim=(0, 1)))
+            
+            if gene_expression is not None and self.gene_embedding is not None:
+                self.gene_mean.copy_(gene_expression.mean(dim=(0, 1)))
+                self.gene_std.copy_(gene_expression.std(dim=(0, 1)))
+                
     def save_pretrained(self, save_directory: str):
         """Save model to directory"""
+        os.makedirs(save_directory, exist_ok=True)
+        
         # Save BERT weights
         self.bert.save_pretrained(save_directory)
-
-        # Save additional components
-        state_dict = {
-            'spatial_projector': self.spatial_projector.state_dict(),
-            'neighbor_predictor': self.neighbor_predictor.state_dict(),
-            'feature_predictor': self.feature_predictor.state_dict(),
-            'gene_expression_predictor': self.gene_expression_predictor.state_dict(),
-            'confidence_predictor': self.confidence_predictor.state_dict(),
-            'feature_means': self.feature_means,
-            'feature_stds': self.feature_stds
+        
+        # Save model configuration
+        config = {
+            'feature_dim': self.feature_dim,
+            'spatial_dim': self.spatial_dim,
+            'max_neighbors': self.max_neighbors,
+            'feature_names': self.feature_names,
+            'normalization_stats': {
+                'spatial_mean': self.spatial_mean.cpu().tolist(),
+                'spatial_std': self.spatial_std.cpu().tolist()
+            }
         }
-        torch.save(state_dict, f"{save_directory}/cell_meta_bert_heads.pt")
-
+        
+        if self.gene_embedding is not None:
+            config['normalization_stats'].update({
+                'gene_mean': self.gene_mean.cpu().tolist(),
+                'gene_std': self.gene_std.cpu().tolist()
+            })
+            
+        with open(os.path.join(save_directory, 'config.json'), 'w') as f:
+            json.dump(config, f, indent=2)
+            
+        # Save model state
+        torch.save({
+            'spatial_embedding': self.spatial_embedding.state_dict(),
+            'gene_embedding': self.gene_embedding.state_dict() if self.gene_embedding else None,
+            'predictor': self.predictor.state_dict(),
+            'confidence_scorer': self.confidence_scorer.state_dict()
+        }, os.path.join(save_directory, 'model_state.pt'))
+        
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, *model_args, **kwargs):
+    def from_pretrained(cls, model_path: str, device: str = 'cuda'):
         """Load model from pretrained weights"""
-        # Load BERT weights
-        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
-
-        # Load additional components
-        heads_path = f"{pretrained_model_name_or_path}/cell_meta_bert_heads.pt"
-        if os.path.exists(heads_path):
-            device = next(model.parameters()).device
-            state_dict = torch.load(heads_path, map_location=device)
-            model.spatial_projector.load_state_dict(state_dict['spatial_projector'])
-            model.neighbor_predictor.load_state_dict(state_dict['neighbor_predictor'])
-            model.feature_predictor.load_state_dict(state_dict['feature_predictor'])
-            model.gene_expression_predictor.load_state_dict(state_dict['gene_expression_predictor'])
-            model.confidence_predictor.load_state_dict(state_dict['confidence_predictor'])
-
+        # Load configuration
+        with open(os.path.join(model_path, 'config.json'), 'r') as f:
+            config = json.load(f)
+            
+        # Create model instance
+        model = cls(
+            bert_model_name=model_path,
+            feature_dim=config['feature_dim'],
+            spatial_dim=config['spatial_dim'],
+            max_neighbors=config['max_neighbors'],
+            gene_vocab_size=len(config['normalization_stats'].get('gene_mean', [])) or None,
+            device=device,
+            feature_names=config['feature_names']
+        )
+        
+        # Load normalization statistics
+        stats = config['normalization_stats']
+        model.spatial_mean.copy_(torch.tensor(stats['spatial_mean'], device=device))
+        model.spatial_std.copy_(torch.tensor(stats['spatial_std'], device=device))
+        
+        if model.gene_embedding is not None:
+            model.gene_mean.copy_(torch.tensor(stats['gene_mean'], device=device))
+            model.gene_std.copy_(torch.tensor(stats['gene_std'], device=device))
+            
+        # Load model state
+        state_dict = torch.load(os.path.join(model_path, 'model_state.pt'), map_location=device)
+        model.spatial_embedding.load_state_dict(state_dict['spatial_embedding'])
+        if state_dict['gene_embedding'] and model.gene_embedding:
+            model.gene_embedding.load_state_dict(state_dict['gene_embedding'])
+        model.predictor.load_state_dict(state_dict['predictor'])
+        model.confidence_scorer.load_state_dict(state_dict['confidence_scorer'])
+        
         return model

@@ -9,6 +9,7 @@ from rich.console import Console
 import scanpy as sc
 from pathlib import Path
 import os
+from datetime import datetime
 
 console = Console()
 
@@ -43,7 +44,7 @@ def get_initial_config():
     # Get figures directory
     figures_dir = Prompt.ask(
         "Enter directory for saving figures",
-        default="figures"
+        default=f"ingest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
 
     # Get tissue type
@@ -59,7 +60,7 @@ def get_initial_config():
     )
     tissue_type = TissueType(tissue_options[tissue_choice])
 
-    return verbosity, figures_dir, tissue_type
+    return verbosity, f'figures/{figures_dir}', tissue_type
 
 
 def get_qc_params():
