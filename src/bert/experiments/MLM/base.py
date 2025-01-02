@@ -58,7 +58,7 @@ class MLMTrainer:
             'labels': torch.stack(labels).to(self.device)
         }
 
-    def train(self, num_epochs: int = 10, output_dir: str = 'outputs', save_steps: int = 1000):
+    def train(self, num_epochs: int = 10, output_dir: str = 'outputs', save_steps: int = 1000, resume_from_checkpoint: str = None):
         # Create output directory
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -75,6 +75,27 @@ class MLMTrainer:
             num_warmup_steps=total_steps // 10,
             num_training_steps=total_steps
         )
+
+        # Load checkpoint if specified
+        start_epoch = 0
+        step = 0
+        best_val_loss = float('inf')
+        if resume_from_checkpoint:
+            print(f'\n--> Resuming from checkpoint: {resume_from_checkpoint}')
+            checkpoint_path = Path(resume_from_checkpoint)
+            if checkpoint_path.exists():
+                # Extract step number from checkpoint directory name
+                step = int(checkpoint_path.name.split('-')[1])
+                # Calculate starting epoch
+                start_epoch = step // len(train_dataloader)
+                
+                # Load model state
+                self.model = BertForMaskedLM.from_pretrained(checkpoint_path)
+                self.model.to(self.device)
+                
+                print(f'--> Resuming from step {step} (epoch {start_epoch + 1})')
+            else:
+                raise ValueError(f"Checkpoint path {resume_from_checkpoint} does not exist")
 
         print('\n\n------------ Starting Training Loop  --\n')
         print('--------------------------------------------')
