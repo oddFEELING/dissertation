@@ -154,7 +154,7 @@ model = train_model(
 )
 ```
 
-### Detailed Examples
+### How-Tos
 
 #### 1. Data Loading and Preprocessing
 
