@@ -158,22 +158,36 @@ model = train_model(
 
 #### 1. Data Loading and Preprocessing
 
+First, initialize the data preparation pipeline. The `DataPrep` class handles normalization of gene expressions, spatial coordinate scaling, and computation of cell-cell interactions.
+
 ```python
 from src.bert.data_prep import DataPrep
-from src.bert.dataloader import create_st_dataloaders
 
 # Initialize data preparation
 data_prep = DataPrep(adata_path='data/processed/sample.h5ad')
+```
 
-# Process the data with custom parameters
+You can customize the preprocessing parameters to match your specific dataset requirements. The following parameters are commonly adjusted:
+
+- `normalize_expression`: Scales gene expression values
+- `compute_neighbors`: Enables neighbor detection
+- `n_neighbors`: Number of neighbors to consider
+- `distance_threshold`: Maximum distance for neighbor relationships
+
+```python
 processed_data = data_prep.prepare_data(
     normalize_expression=True,
     compute_neighbors=True,
     n_neighbors=12,
     distance_threshold=100.0
 )
+```
 
-# Create dataloaders for training
+After preprocessing, create data loaders for training. The `create_st_dataloaders` function handles batch creation and data splitting:
+
+```python
+from src.bert.dataloader import create_st_dataloaders
+
 train_loader, val_loader = create_st_dataloaders(
     adata=data_prep.adata,
     processed_data=processed_data,
@@ -182,10 +196,12 @@ train_loader, val_loader = create_st_dataloaders(
     shuffle=True,
     num_workers=4
 )
+```
 
-# Iterate through batches
+Each batch contains multiple components that can be accessed individually:
+
+```python
 for batch in train_loader:
-    # Access different components of the batch
     input_ids = batch['input_ids']           # Token IDs
     attention_mask = batch['attention_mask']  # Attention mask
     spatial_coords = batch['spatial_coords']  # Spatial coordinates
@@ -194,28 +210,42 @@ for batch in train_loader:
 
 #### 2. Tokenizer Usage
 
+The custom tokenizer is designed specifically for spatial transcriptomics data. Initialize it with a base BERT model:
+
 ```python
 from src.bert.tokenizer.tokeniser import TissueTokenizer
 
-# Initialize tokenizer
 tokenizer = TissueTokenizer(base_model_name='bert-base-uncased')
+```
 
-# Add gene vocabulary
+Before processing sequences, add your dataset's gene names to the tokenizer vocabulary:
+
+```python
 gene_names = ['TP53', 'BRCA1', 'MYC', 'EGFR']  # Your gene list
 tokenizer.add_gene_tokens(gene_names)
+```
 
-# Example of tokenizing a tissue sequence
+The tokenizer handles special tokens and formatting for tissue sequences. Here's an example of tokenizing a tissue sequence:
+
+```python
 sequence = "[TISSUE] brain_cancer [SPATIAL] -16.49 82.62 [GENE] gene_TP53 0.85"
 encoded = tokenizer.tokenizer.encode(
     sequence,
     add_special_tokens=True,
     return_tensors='pt'
 )
+```
 
-# Verify token sequence
+Always validate your token sequences to ensure proper formatting:
+
+```python
 tokenizer.validate_token_sequence(sequence)
+```
 
-# Save tokenizer for later use
+Save your tokenizer for later use or load a previously saved one:
+
+```python
+# Save tokenizer
 tokenizer.save_tokenizer('tokenizer/_internal')
 
 # Load existing tokenizer
@@ -224,12 +254,12 @@ loaded_tokenizer = TissueTokenizer.load_tokenizer('tokenizer/_internal')
 
 #### 3. Model Training and Inference
 
+Initialize the model with your desired configuration. The architecture can be customized through these parameters:
+
 ```python
-from src.bert.main import train_model
 from src.bert.base import CellMetaBERT
 import torch
 
-# Initialize model with custom configuration
 model = CellMetaBERT(
     config={
         'hidden_size': 768,
@@ -240,8 +270,13 @@ model = CellMetaBERT(
         'attention_probs_dropout_prob': 0.1
     }
 )
+```
 
-# Training loop with custom parameters
+Training the model involves setting up the training loop with appropriate parameters:
+
+```python
+from src.bert.main import train_model
+
 trainer = train_model(
     model=model,
     train_loader=train_loader,
@@ -252,41 +287,47 @@ trainer = train_model(
     checkpoint_dir='checkpoints/',
     log_interval=100
 )
+```
 
-# Inference example
+For inference, set the model to evaluation mode and prepare your input data:
+
+```python
 model.eval()
 with torch.no_grad():
-    # Prepare input data
     input_data = {
         'input_ids': encoded,
         'attention_mask': torch.ones_like(encoded),
         'spatial_coords': torch.tensor([[-16.49, 82.62]]),
-        'gene_expr': torch.tensor([[0.85, 0.0, 0.3, 0.5]])  # Example gene expressions
+        'gene_expr': torch.tensor([[0.85, 0.0, 0.3, 0.5]])
     }
 
-    # Get predictions
     outputs = model(**input_data)
 
-    # Access different predictions
+    # Access predictions
     cell_states = outputs['cell_states']
     neighbor_preds = outputs['neighbor_predictions']
     gene_expr_preds = outputs['gene_expression_predictions']
+```
 
+Save your trained model and load it later for inference:
+
+```python
 # Save model
 torch.save(model.state_dict(), 'outputs/final_model/model.pt')
 
-# Load model for inference
+# Load model
 loaded_model = CellMetaBERT(config=model.config)
 loaded_model.load_state_dict(torch.load('outputs/final_model/model.pt'))
 ```
 
-#### 4. Complete Pipeline Example
+#### 4. Complete Pipeline
+
+The pipeline combines all components into a single workflow. First, set up your configuration:
 
 ```python
 from src.pipeline import run_pipeline
 from pathlib import Path
 
-# Setup pipeline configuration
 pipeline_config = {
     'data_path': 'data/raw/sample.h5ad',
     'output_dir': Path('outputs/'),
@@ -301,19 +342,30 @@ pipeline_config = {
         'distance_threshold': 100.0
     }
 }
+```
 
-# Run complete pipeline
+Run the complete pipeline and access results:
+
+```python
 results = run_pipeline(
     config=pipeline_config,
     save_checkpoints=True,
     verbose=True
 )
 
-# Access pipeline results
+# Access results
 trained_model = results['model']
 evaluation_metrics = results['metrics']
 predictions = results['predictions']
 ```
+
+The pipeline handles all steps automatically:
+
+1. Data preprocessing
+2. Tokenization
+3. Model training
+4. Evaluation
+5. Result collection
 
 ## Configuration
 
