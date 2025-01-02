@@ -28,11 +28,9 @@ class TokenAnalyzer:
         """
         Analyze token predictions including accuracy, confidence, and error patterns.
         
-        Args:
-            num_samples: Number of samples to analyze
+        :param num_samples Number of samples to analyze
             
-        Returns:
-            Dictionary containing various token-level metrics
+        :returns Dictionary containing various token-level metrics
         """
         results = {}
         predictions = []
@@ -120,11 +118,8 @@ class TokenAnalyzer:
         """
         Generate confusion matrix for top-k most common tokens.
         
-        Args:
-            top_k: Number of most frequent tokens to include
-            
-        Returns:
-            Tuple of (confusion matrix, token labels)
+        :param top_k Number of most frequent tokens to include
+        :returns Tuple of (confusion matrix, token labels)
         """
         predictions = []
         true_labels = []
@@ -172,11 +167,9 @@ class TokenAnalyzer:
         """
         Analyze model performance on rare words.
         
-        Args:
-            rarity_threshold: Threshold for considering a word rare
+        :param rarity_threshold Threshold for considering a word rare
             
-        Returns:
-            Dictionary containing rare word analysis metrics
+        :returns Dictionary containing rare word analysis metrics
         """
         # Count token frequencies in training data
         token_counts = defaultdict(int)
@@ -239,11 +232,9 @@ class TokenAnalyzer:
         """
         Generate visualizations for token analysis results.
         
-        Args:
-            results: Dictionary containing token analysis results
+        :param results: Dictionary containing token analysis results
             
-        Returns:
-            Dictionary containing figure objects
+        :returns Dictionary containing figure objects
         """
         figures = {}
         

@@ -25,14 +25,14 @@ class BertEvaluator:
         """
         Initialize the BERT model evaluator.
         
-        Args:
-            model: The trained BERT model
-            tokenizer: BERT tokenizer
-            data_module: DataModule containing the datasets
-            optimizer: Optional optimizer for training dynamics analysis
-            scheduler: Optional scheduler for training dynamics analysis
-            device: Device to run evaluations on ('cuda' or 'cpu')
-            output_dir: Base directory for saving results
+        
+        :param model: The trained BERT model
+        :param tokenizer: BERT tokenizer
+        :param data_module: DataModule containing the datasets
+        :param optimizer: Optional optimizer for training dynamics analysis
+        :param scheduler: Optional scheduler for training dynamics analysis
+        :param device: Device to run evaluations on ('cuda' or 'cpu')
+        :param output_dir: Base directory for saving results
         """
         self.model = model
         self.tokenizer = tokenizer
@@ -62,12 +62,10 @@ class BertEvaluator:
         """
         Run all evaluations and generate visualizations.
         
-        Args:
-            num_samples: Number of samples to use for analysis
-            save_results: Whether to save results to disk
+        :param num_samples: Number of samples to use for analysis
+        :param save_results: Whether to save results to disk
             
-        Returns:
-            Dictionary containing all evaluation results
+        :eturns Dictionary containing all evaluation results
         """
         results = {}
         

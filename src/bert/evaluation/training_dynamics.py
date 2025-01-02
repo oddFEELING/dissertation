@@ -153,11 +153,9 @@ class TrainingDynamicsAnalyzer:
         """
         Generate visualizations for training dynamics analysis.
         
-        Args:
-            results: Dictionary containing training dynamics results
+        :param results: Dictionary containing training dynamics results
             
-        Returns:
-            Dictionary containing figure objects
+        :returns Dictionary containing figure objects
         """
         figures = {}
         

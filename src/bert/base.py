@@ -127,14 +127,12 @@ class CellMetaBERT(nn.Module):
         """
         Forward pass returning predictions in the required schema format
         
-        Args:
-            batch: Dictionary containing:
+         :params batch: Dictionary containing:
                 - spatial_coords: [batch_size, max_neighbors, 2]
                 - gene_expression (optional): [batch_size, max_neighbors, gene_vocab_size]
                 - neighbor_features: [batch_size, max_neighbors, feature_dim]
                 
-        Returns:
-            Dictionary containing:
+        :eturns Dictionary containing:
                 - neighbor_predictions: [batch_size, max_neighbors, 4]  # [x, y, distance, interaction_strength]
                 - predicted_features: [batch_size, max_neighbors, feature_dim]
                 - feature_confidence: [batch_size, max_neighbors, 1]

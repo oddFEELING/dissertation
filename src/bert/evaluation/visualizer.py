@@ -30,11 +30,9 @@ class Visualizer:
         """
         Generate attention pattern visualizations.
         
-        Args:
-            num_samples: Number of examples to visualize
+        :param num_samples: Number of examples to visualize
             
-        Returns:
-            Dictionary containing attention visualizations
+        :returns Dictionary containing attention visualizations
         """
         figures = {}
         
@@ -85,11 +83,9 @@ class Visualizer:
         """
         Generate embedding space visualizations using dimensionality reduction.
         
-        Args:
-            num_samples: Number of tokens to visualize
+        :param num_samples: Number of tokens to visualize
             
-        Returns:
-            Dictionary containing embedding visualizations
+        :returns Dictionary containing embedding visualizations
         """
         figures = {}
         embeddings = []
@@ -175,11 +171,9 @@ class Visualizer:
         """
         Generate visualizations of interesting prediction examples.
         
-        Args:
-            num_examples: Number of examples to visualize
+        :param num_examples: Number of examples to visualize
             
-        Returns:
-            Dictionary containing prediction visualizations
+        :returns Dictionary containing prediction visualizations
         """
         figures = {}
         examples = {
@@ -272,11 +266,9 @@ class Visualizer:
         """
         Generate graph visualization of attention relationships.
         
-        Args:
-            sequence: Input sequence to visualize
+        :param sequence: Input sequence to visualize
             
-        Returns:
-            Dictionary containing attention graph visualization
+        :returns Dictionary containing attention graph visualization
         """
         # Tokenize input
         inputs = self.tokenizer(
@@ -336,11 +328,9 @@ class Visualizer:
         """
         Create an interactive dashboard combining various visualizations.
         
-        Args:
-            all_results: Dictionary containing all analysis results
+        :param all_results: Dictionary containing all analysis results
             
-        Returns:
-            Plotly figure containing the dashboard
+        :returns Plotly figure containing the dashboard
         """
         # Create subplot grid
         fig = make_subplots(

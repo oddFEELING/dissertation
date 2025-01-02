@@ -41,11 +41,9 @@ class LinguisticAnalyzer:
         """
         Analyze model performance across different parts of speech.
         
-        Args:
-            num_samples: Number of samples to analyze
+        :param num_samples Number of samples to analyze
             
-        Returns:
-            Dictionary containing POS-based performance metrics
+        :returns Dictionary containing POS-based performance metrics
         """
         pos_predictions = defaultdict(list)
         pos_confidences = defaultdict(list)
@@ -102,11 +100,8 @@ class LinguisticAnalyzer:
         """
         Analyze semantic relationships between predictions and true tokens.
         
-        Args:
-            num_samples: Number of samples to analyze
-            
-        Returns:
-            Dictionary containing semantic similarity metrics
+        :param num_samples Number of samples to analyze
+        :returns Dictionary containing semantic similarity metrics
         """
         similarities = []
         context_effects = []
@@ -162,11 +157,8 @@ class LinguisticAnalyzer:
         """
         Analyze how context affects prediction patterns.
         
-        Args:
-            num_samples: Number of samples to analyze
-            
-        Returns:
-            Dictionary containing contextual pattern analysis
+        :param num_samples Number of samples to analyze
+        :returns Dictionary containing contextual pattern analysis
         """
         context_scores = defaultdict(list)
         attention_patterns = []
@@ -220,11 +212,8 @@ class LinguisticAnalyzer:
         """
         Generate visualizations for linguistic analysis results.
         
-        Args:
-            results: Dictionary containing linguistic analysis results
-            
-        Returns:
-            Dictionary containing figure objects
+        :param results: Dictionary containing linguistic analysis results
+        :returns Dictionary containing figure objects
         """
         figures = {}
         
