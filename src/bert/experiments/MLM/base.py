@@ -28,7 +28,7 @@ class MLMTrainer:
 
         self.data_module = data_module
         self.lr = lr
-        
+
         # Initialize masking strategy with mask token ID from tokenizer
         self.masking_strategy = MaskingStrategy(
             data_module.train_dataset.tokenizer.tokenizer,
@@ -41,24 +41,25 @@ class MLMTrainer:
         input_ids = batch['input_ids'].clone().to(self.device)
         attention_mask = batch['attention_mask'].clone().to(self.device)
         token_type_ids = batch['token_type_ids'].clone().to(self.device)
-        
+
         masked_input_ids = []
         labels = []
-        
+
         # Apply masking to each sequence in the batch
         for sequence in input_ids:
             masked_sequence, sequence_labels = self.masking_strategy.apply_masking(sequence)
             masked_input_ids.append(masked_sequence)
             labels.append(sequence_labels)
-            
+
         return {
             'input_ids': torch.stack(masked_input_ids),  # Already on correct device
-            'attention_mask': attention_mask,            # Already on correct device
-            'token_type_ids': token_type_ids,           # Already on correct device
+            'attention_mask': attention_mask,  # Already on correct device
+            'token_type_ids': token_type_ids,  # Already on correct device
             'labels': torch.stack(labels).to(self.device)
         }
 
-    def train(self, num_epochs: int = 10, output_dir: str = 'outputs', save_steps: int = 1000, resume_from_checkpoint: str = None):
+    def train(self, num_epochs: int = 10, output_dir: str = 'outputs', save_steps: int = 1000,
+              resume_from_checkpoint: str = None, start_epoch=0):
         # Create output directory
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -77,9 +78,6 @@ class MLMTrainer:
         )
 
         # Load checkpoint if specified
-        start_epoch = 0
-        step = 0
-        best_val_loss = float('inf')
         if resume_from_checkpoint:
             print(f'\n--> Resuming from checkpoint: {resume_from_checkpoint}')
             checkpoint_path = Path(resume_from_checkpoint)
@@ -88,11 +86,11 @@ class MLMTrainer:
                 step = int(checkpoint_path.name.split('-')[1])
                 # Calculate starting epoch
                 start_epoch = step // len(train_dataloader)
-                
+
                 # Load model state
                 self.model = BertForMaskedLM.from_pretrained(checkpoint_path)
                 self.model.to(self.device)
-                
+
                 print(f'--> Resuming from step {step} (epoch {start_epoch + 1})')
             else:
                 raise ValueError(f"Checkpoint path {resume_from_checkpoint} does not exist")
@@ -104,14 +102,14 @@ class MLMTrainer:
         print(f'--> Initial learning rate: {self.lr}')
         print(f'--> Number of parameters: {sum(p.numel() for p in self.model.parameters())}')
         print('--------------------------------------------\n')
-        
+
         best_val_loss = float('inf')
         step = 0
-        
+
         # Track metrics
         epoch_metrics = []
 
-        for epoch in range(num_epochs):
+        for epoch in range(start_epoch, num_epochs):
             print(f'\n=== Epoch {epoch + 1}/{num_epochs} ===')
             epoch_start_lr = scheduler.get_last_lr()[0]
             print(f'--> Current learning rate: {epoch_start_lr:.2e}')
@@ -120,7 +118,7 @@ class MLMTrainer:
             self.model.train()
             train_losses = []
             train_bar = tqdm(train_dataloader, desc='Training', leave=False)
-            
+
             # Track masking statistics
             total_tokens = 0
             masked_tokens = 0
@@ -128,11 +126,11 @@ class MLMTrainer:
             for batch in train_bar:
                 # Apply custom masking
                 masked_batch = self.prepare_batch(batch)
-                
+
                 # Update masking statistics
                 total_tokens += torch.sum(masked_batch['attention_mask']).item()
                 masked_tokens += torch.sum(masked_batch['labels'] != -100).item()
-                
+
                 # Forward pass
                 outputs = self.model(
                     input_ids=masked_batch['input_ids'],
@@ -167,7 +165,7 @@ class MLMTrainer:
 
             # Validation
             val_loss, val_metrics = self.evaluate(dataloader=val_dataloader)
-            
+
             # Log epoch statistics
             print('\nEpoch Statistics:')
             print('------------------')
@@ -186,7 +184,7 @@ class MLMTrainer:
                 best_val_loss = val_loss
                 self.save_model(output_dir / "BEST_MODEL")
                 print(f'--> New best model saved! (validation loss: {val_loss:.4f})')
-            
+
             # Store epoch metrics
             epoch_metrics.append({
                 'epoch': epoch + 1,
@@ -201,16 +199,16 @@ class MLMTrainer:
 
         # Save final model and training metrics
         self.save_model(output_dir / 'final_model')
-        
+
         # Save training metrics
         import json
         with open(output_dir / 'training_metrics.json', 'w') as f:
             json.dump(epoch_metrics, f, indent=2)
-        
+
         print('\n\n------------ Training Loop Finished  --\n')
         print(f'Best validation loss: {best_val_loss:.4f}')
         print(f'Final learning rate: {scheduler.get_last_lr()[0]:.2e}')
-        print(f'Training metrics saved to {output_dir/"training_metrics.json"}')
+        print(f'Training metrics saved to {output_dir / "training_metrics.json"}')
 
     def evaluate(self, dataloader):
         """Evaluate the model on the provided dataloader"""
@@ -229,26 +227,26 @@ class MLMTrainer:
                     labels=batch['labels'],
                     token_type_ids=batch['token_type_ids'],
                 )
-                
+
                 loss = outputs.loss
                 logits = outputs.logits
                 labels = batch['labels']
-                
+
                 # Calculate accuracy
                 predictions = torch.argmax(logits, dim=-1)
                 mask = labels != -100
-                
+
                 # Overall accuracy
                 correct = (predictions == labels) & mask
                 total_correct += correct.sum().item()
                 total_tokens += mask.sum().item()
-                
+
                 # Masked token accuracy (using tokenizer's mask_token_id)
                 mask_token_id = self.data_module.train_dataset.tokenizer.tokenizer.mask_token_id
                 masked_correct = correct & (batch['input_ids'] == mask_token_id)
                 total_masked_correct += masked_correct.sum().item()
                 total_masked_tokens += (batch['input_ids'] == mask_token_id).sum().item()
-                
+
                 total_loss += loss.item()
 
         avg_loss = total_loss / len(dataloader)
