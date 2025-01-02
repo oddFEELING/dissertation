@@ -1,8 +1,8 @@
 from statsmodels.graphics.tukeyplot import results
-from src.ingest import load_data, ingest_config, perform_qc, \
+from src.ingest._methods import load_data, ingest_config, perform_qc, \
     cluster_data, PyPlotConfig, calc_cancer_score, get_high_cancer_regions, \
     get_top_cancer_genes
-from src.ingest.methods import TissueType
+from src.ingest._methods import TissueType
 from rich.pretty import pprint
 from rich.prompt import Prompt, IntPrompt, Confirm
 from rich.console import Console
@@ -117,7 +117,7 @@ def get_clustering_params():
     return n_pcs, n_neighbors, cluster_res
 
 
-def main():
+def Ingest():
     # Get initial configuration
     verbosity, figures_dir, tissue_type = get_initial_config()
 
@@ -213,5 +213,3 @@ def main():
     console.print("\n[bold green]Pipeline completed successfully![/bold green]")
 
 
-if __name__ == "__main__":
-    main()

@@ -4,7 +4,7 @@ from pywin.framework.interact import valueFormatOutputError
 from transformers import BertTokenizer, BertTokenizerFast
 from tokenizers import Tokenizer, models, normalizers, pre_tokenizers, decoders, processors
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 custom_special_tokens = [
     "[TISSUE]",  # Tissue type
@@ -63,7 +63,7 @@ class TissueTokenizer():
 
     def _create_tokenizer(self, tokenizer_path: str = 'tokenizer.json'):
         print('--> Creating tokenizer')
-        # Add special tokens
+        # Add special tokens to vocab first
         for token in self.special_tokens:
             if token not in self.vocab:
                 self.vocab[token] = len(self.vocab)
@@ -76,9 +76,19 @@ class TissueTokenizer():
 
         # Configure normalization to preserve case and numbers
         custom_tokenizer.normalizer = normalizers.Sequence([
-            normalizers.Replace(pattern=r"(-?\d+\.\d+)", content=" \\1 "),  # Preserve decimal numbers
-            normalizers.Replace(pattern=r"(-?\d+)", content=" \\1 "),  # Preserve integers
-            normalizers.Replace(pattern=r"[_]", content=" _ "),  # Split on underscores
+            # Preserve gene tokens (do this first to prevent number matching)
+            normalizers.Replace(
+                pattern=r"(gene_[A-Z0-9]+)",  # Matches gene_SYMBOL format
+                content=" \\1 "
+            ),
+            # Preserve tissue types and other underscore tokens
+            normalizers.Replace(
+                pattern=r"([a-zA-Z]+_[a-zA-Z]+)",  # Matches word_word format
+                content=" \\1 "
+            ),
+            # Handle spatial coordinates and other numbers
+            normalizers.Replace(pattern=r"(-?\d+\.\d+)", content=" \\1 "),  # Decimal numbers
+            normalizers.Replace(pattern=r"(-?\d+)", content=" \\1 "),  # Integers
             normalizers.NFD(),
             normalizers.StripAccents()
         ])
@@ -94,11 +104,21 @@ class TissueTokenizer():
 
         # Configure decoder
         custom_decoder = decoders.WordPiece(prefix="##")
+        custom_tokenizer.decoder = custom_decoder
+
+        # Add special tokens to the tokenizer's special tokens map
+        special_tokens_map = {
+            "unk_token": "[UNK]",
+            "sep_token": "[SEP]",
+            "pad_token": "[PAD]",
+            "cls_token": "[CLS]",
+            "mask_token": "[MASK]"
+        }
 
         # Configure post-processing
         custom_tokenizer.post_processor = processors.TemplateProcessing(
-            single="[CLS] $A [SEP]",
-            pair="[CLS] $A [SEP] $B [SEP]",
+            single="$A",
+            pair="$A $B",
             special_tokens=[
                 ("[CLS]", self.vocab["[CLS]"]),
                 ("[SEP]", self.vocab["[SEP]"])
@@ -109,18 +129,70 @@ class TissueTokenizer():
         fast_tokenizer = BertTokenizerFast(
             tokenizer_object=custom_tokenizer,
             vocab=self.vocab,
-            unk_token="[UNK]",
-            sep_token="[SEP]",
-            pad_token="[PAD]",
-            cls_token="[CLS]",
-            mask_token="[MASK]"
+            **special_tokens_map
         )
 
-        # Add all special tokens
+        # Add all special tokens ensuring they're treated as special
         all_special_tokens = self.special_tokens + self.gene_tokens
-        special_tokens = {"additional_special_tokens": all_special_tokens}
+        special_tokens = {
+            "additional_special_tokens": all_special_tokens,
+            **special_tokens_map
+        }
         fast_tokenizer.add_special_tokens(special_tokens)
+        
+        # Ensure special tokens are never split
+        fast_tokenizer.add_tokens(all_special_tokens, special_tokens=True)
+        
         return fast_tokenizer
+
+    def _validate_spatial_coordinate(self, value_str: str) -> Optional[str]:
+        """Validate spatial coordinate is within -100 to 100 range"""
+        try:
+            value = float(value_str)
+            if -100 <= value <= 100:
+                return value_str
+            return "[UNK]"
+        except ValueError:
+            return "[UNK]"
+
+    def validate_token_sequence(self, text: str) -> bool:
+        """Validate a token sequence for proper formatting and value ranges"""
+        # Split text into tokens
+        tokens = text.split()
+        
+        # Track if we're expecting spatial coordinates
+        expecting_spatial = False
+        
+        for i, token in enumerate(tokens):
+            if token == "[SPATIAL]":
+                expecting_spatial = True
+                continue
+                
+            # Validate the next two tokens after [SPATIAL] as coordinates
+            if expecting_spatial and i < len(tokens) - 1:
+                coord1 = self._validate_spatial_coordinate(token)
+                coord2 = self._validate_spatial_coordinate(tokens[i + 1])
+                if coord1 == "[UNK]" or coord2 == "[UNK]":
+                    print(f"Invalid spatial coordinates: {token}, {tokens[i + 1]}")
+                    return False
+                expecting_spatial = False
+                
+            # Validate gene tokens
+            if token.startswith("gene_") and token not in self.vocab:
+                print(f"Invalid gene token: {token}")
+                return False
+
+        # Verify tokenization preserves the sequence
+        encoded = self.tokenizer.encode(text, add_special_tokens=True)
+        decoded = self.tokenizer.decode(encoded, skip_special_tokens=False)
+
+        print(f"Sequence: {text} \nEncoded: {encoded}\nDecoded: {decoded}")
+        
+        if text.strip() != decoded.strip():
+            print(f"Tokenization changed the sequence:\nOriginal: {text}\nDecoded:  {decoded}")
+            return False
+            
+        return True
 
     @classmethod
     def load_tokenizer(cls, tokenizer_dir: str = 'tokenizer/_internal'):
@@ -157,3 +229,54 @@ class TissueTokenizer():
         token = f'gene_{gene_name}'
         if token not in self.vocab:
             raise ValueError(F'Gene {gene_name} not found in vocabulary.')
+        return token
+
+    def verify_special_tokens(self):
+        """Verify all special tokens and sequence components"""
+        print("\nVerifying token handling...")
+        
+        # Test full sequence
+        test_sequence = "[CLS] [TISSUE] brain_cancer [SPATIAL] -16.49 82.62 [SEP]"
+        print("\nTesting full sequence handling:")
+        encoded = self.tokenizer.encode(test_sequence, add_special_tokens=False)
+        decoded = self.tokenizer.decode(encoded, skip_special_tokens=False)
+        print(f"Sequence:\nOriginal: {test_sequence}\nDecoded:  {decoded}")
+        assert test_sequence.strip() == decoded.strip(), "Sequence was not preserved!"
+        
+        # Test coordinate handling
+        test_coords = ["-99.5", "0.0", "99.99", "-100", "100"]
+        print("\nTesting coordinate handling:")
+        for coord in test_coords:
+            encoded = self.tokenizer.encode(coord, add_special_tokens=False)
+            decoded = self.tokenizer.decode(encoded, skip_special_tokens=False)
+            print(f"Coordinate {coord} -> {encoded} -> {decoded}")
+            assert decoded.strip() == coord, f"Coordinate {coord} was not preserved!"
+
+        # Test underscore token handling
+        test_underscore_tokens = ["brain_cancer", "liver_cancer", "lung_tissue"]
+        print("\nTesting underscore token handling:")
+        for token in test_underscore_tokens:
+            encoded = self.tokenizer.encode(token, add_special_tokens=False)
+            decoded = self.tokenizer.decode(encoded, skip_special_tokens=False)
+            print(f"Underscore token {token} -> {encoded} -> {decoded}")
+            assert len(encoded) == 1, f"Underscore token {token} was split!"
+
+        # Test gene token handling
+        if self.gene_tokens:
+            test_genes = self.gene_tokens[:5]  # Test first 5 genes
+            print("\nTesting gene token handling:")
+            for gene in test_genes:
+                encoded = self.tokenizer.encode(gene, add_special_tokens=False)
+                decoded = self.tokenizer.decode(encoded, skip_special_tokens=False)
+                print(f"Gene {gene} -> {encoded} -> {decoded}")
+                assert len(encoded) == 1, f"Gene token {gene} was split!"
+        
+        # Test special tokens
+        print("\nTesting special tokens:")
+        for token in self.special_tokens:
+            encoded = self.tokenizer.encode(token, add_special_tokens=False)
+            decoded = self.tokenizer.decode(encoded, skip_special_tokens=False)
+            print(f"{token} -> {encoded} -> {decoded}")
+            assert len(encoded) == 1, f"Token {token} was split!"
+
+        print("\nAll verification tests passed successfully!")

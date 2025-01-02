@@ -16,3 +16,4 @@ tensorboard
 pydantic
 langchain
 hydra-core
+ijson

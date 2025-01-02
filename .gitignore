@@ -10,3 +10,4 @@
 __pycache__
 instructions.md
 purpose.md
+/src/bert/outputs

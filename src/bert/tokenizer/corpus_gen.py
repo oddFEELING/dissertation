@@ -28,17 +28,17 @@ class CorpusGenerator:
 
     def format_spatial_coords(self, coords: List[float]):
         """Format spatial coordinates"""
-        return f"{coords[0]:.3f} {coords[1]:.3f}"
+        return f"{coords[0]:.2f} {coords[1]:.2f}"
 
     def format_gene_sequence(self, gene: VariableGene) -> str:
         """Format a single gene's info"""
-        return f'[GENE] gene_{gene.gene_name} {gene.expression_level:.3f} {gene.dispersion_level:.3f}'
+        return f'[GENE] gene_{gene.gene_name} {gene.expression_level:.2f} {gene.dispersion_level:.2f}'
 
     def format_neighbors_sequence(self, neighbors: List[NeighborInteractivity]) -> str:
         """Format neighbourhood information"""
         neighbor_strs = []
         for n in neighbors:
-            neighbor_str = f'[NEIGHBOR] {n.location[0]} {n.location[1]} {n.distance:.2f} {n.angle:.2f} {n.interactivity_score}'
+            neighbor_str = f'[NEIGHBOR] {n.location[0]:.2f} {n.location[1]:.2f} {n.distance} {n.angle} {n.interactivity_score}'
             neighbor_strs.append(neighbor_str)
 
         return " ".join(neighbor_strs)
@@ -56,7 +56,7 @@ class CorpusGenerator:
             f'[SPATIAL] {self.format_spatial_coords(features.spatial_coords)}',
 
             # Cancer score
-            f"[CANCER] {features.cancer_score:.2f}",
+            f"[CANCER] {features.cancer_score}",
 
             # Reactivity score
             f"[REACT] {features.cell_reactivity:.2f}",

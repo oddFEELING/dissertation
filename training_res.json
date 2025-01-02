@@ -1,0 +1,42 @@
+[
+  {
+    "epoch": 1,
+    "Tokens masked": "174,026 / 1,265,537 (13.75%)",
+    "loss": 2.4074,
+    "perplexity": 11.1,
+    "Accuracy": "25%",
+    "Masked Token Accuracy": "61.60%"
+  },
+  {
+    "epoch": 2,
+    "Tokens masked": "176,567 / 1,281,759 (13.78%)",
+    "loss": 1.1501,
+    "perplexity": 3.16,
+    "Accuracy": "69.75%",
+    "Masked Token Accuracy": "69.75%"
+  },
+  {
+    "epoch": 3,
+    "Tokens masked": "176,134 / 1,281, 759 (13.74%)",
+    "loss": 1.0625,
+    "perplexity": 2.89,
+    "Accuracy": "71.40%",
+    "Masked Token Accuracy": "71.40%"
+  },
+  {
+    "epoch": 4,
+    "Tokens masked": "176,792 / 1,281,759 (13.79%)",
+    "loss": 1.0243,
+    "perplexity": 2.79,
+    "Accuracy": "72.78%",
+    "Masked Token Accuracy": "72.78%"
+  },
+  {
+    "epoch": 5,
+    "Tokens masked": "",
+    "loss": 0,
+    "perplexity": 0,
+    "Accuracy": "",
+    "Masked Token Accuracy": ""
+  }
+]

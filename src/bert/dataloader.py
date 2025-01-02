@@ -21,48 +21,63 @@ class SpatialMLMDataset(Dataset):
         self.mask_probability = mask_probability
         self.device = device
 
-        tokens = self.sequences[0].split()
-        input_ids = self.tokenizer.tokenizer.convert_tokens_to_ids(tokens)
-        print("\nFirst few token IDs:", input_ids[:10])
-        # Print first sequence for debugging
-        print("\nExample sequence:")
-        print(self.sequences[0])
+        # Debugging logs
+        # tokens = self.sequences[0].split()
+        # input_ids = self.tokenizer.tokenizer.convert_tokens_to_ids(tokens)
+        # print("\nFirst few token IDs:", input_ids[:10])
+        # # Print first sequence for debugging
+        # print("\nExample sequence:")
+        # print(self.sequences[0])
 
     def __len__(self):
         return len(self.sequences)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         sequence = self.sequences[idx]
-        input_ids, attention_mask, labels = self.mask_sequence(sequence)
-        return {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
+        # input_ids, attention_mask, labels = self.mask_sequence(sequence)
+        return self.mask_sequence(sequence)
 
     def mask_sequence(self, sequence: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Apply masking to sequence for MLM"""
-        tokens = sequence.split()
-        input_ids = self.tokenizer.tokenizer.convert_tokens_to_ids(tokens)
-        labels = [-100] * len(input_ids)
-        attention_mask = [1] * len(input_ids)
+        # Use the tokenizer for encoding
+        encoding = self.tokenizer.tokenizer(
+            sequence,
+            padding='max_length',
+            truncation=True,
+            max_length=512,
+            return_tensors='pt'
+        )
+
+        input_ids = encoding['input_ids'].squeeze()
+        attention_mask = encoding['attention_mask'].squeeze()
+        # Add token_type_ids (all zeros for single sequence)
+        token_type_ids = torch.zeros_like(input_ids)
+
+        # Create labels (copy of input_ids)
+        labels = input_ids.clone()
 
         # Find maskable positions (avoid special tokens)
-        maskable_positions = []
-        for i, token in enumerate(tokens):
-            if (not token.startswith('[') and
-                    not token.endswith(']') and
-                    not token.startswith('gene_')):
-                maskable_positions.append(i)
+        special_tokens_mask = torch.tensor(
+            self.tokenizer.tokenizer.get_special_tokens_mask(input_ids, already_has_special_tokens=True)
+        ).bool()
 
-        # Randomly mask tokens
-        if maskable_positions:
-            n_masks = max(1, int(len(maskable_positions) * self.mask_probability))
-            mask_positions = random.sample(maskable_positions, n_masks)
+        # Create probability matrix for masking
+        probability_matrix = torch.full(labels.shape, self.mask_probability)
+        probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
 
-            for pos in mask_positions:
-                labels[pos] = input_ids[pos]
-                input_ids[pos] = self.tokenizer.tokenizer.mask_token_id
+        # Mask tokens
+        masked_indices = torch.bernoulli(probability_matrix).bool()
+        labels[~masked_indices] = -100  # We only compute loss on masked tokens
 
-        return (torch.tensor(input_ids, device=self.device),
-                torch.tensor(attention_mask, device=self.device),
-                (torch.tensor(labels, device=self.device)))
+        # Replace masked input tokens with [MASK] token
+        input_ids[masked_indices] = self.tokenizer.tokenizer.mask_token_id
+
+        return {
+            'input_ids': input_ids.to(self.device),
+            'attention_mask': attention_mask.to(self.device),
+            'token_type_ids': token_type_ids.to(self.device),
+            'labels': labels.to(self.device)
+        }
 
 
 class SpatialDataModule:
@@ -102,6 +117,8 @@ class SpatialDataModule:
             random_state=42
         )
 
+        print(f'--> Loading data with {self.num_workers} workers')
+
         # Generate Datasets
         self.train_dataset = SpatialMLMDataset(
             self.train_seqs, tissue_tokenizer, self.device, mask_probability
@@ -118,7 +135,10 @@ class SpatialDataModule:
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=0,
+            num_workers=self.num_workers,
+            collate_fn=collate_batch,
+            multiprocessing_context='spawn',
+            persistent_workers=True,
         )
 
     def val_dataloader(self):
@@ -126,7 +146,10 @@ class SpatialDataModule:
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=0
+            num_workers=self.num_workers,
+            collate_fn=collate_batch,
+            multiprocessing_context='spawn',
+            persistent_workers=True,
         )
 
     def test_dataloader(self):
@@ -134,5 +157,22 @@ class SpatialDataModule:
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=0
+            num_workers=self.num_workers,
+            collate_fn=collate_batch,
+            multiprocessing_context='spawn',
+            persistent_workers=True,
         )
+
+
+def collate_batch(batch):
+    """Custom collate function to handle padding"""
+    input_ids = torch.stack([item['input_ids'] for item in batch])
+    attention_mask = torch.stack([item['attention_mask'] for item in batch])
+    labels = torch.stack([item['labels'] for item in batch])
+
+    return {
+        'input_ids': input_ids,
+        'attention_mask': attention_mask,
+        'labels': labels,
+        'token_type_ids': torch.stack([item['token_type_ids'] for item in batch]),
+    }

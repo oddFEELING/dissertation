@@ -1,29 +1,74 @@
 # Spatial Transcriptomics BERT Model
 
-A BERT-based model for analyzing spatial transcriptomics data, predicting cell-cell communication, and understanding
-spatial gene expression patterns.
+A specialized BERT-based model for analyzing spatial transcriptomics data, focusing on cell-cell communication patterns and spatial gene expression analysis. This model integrates spatial information with gene expression data to understand tissue organization and cell-cell interactions.
 
 ## Table of Contents
 
+- [Project Overview](#project-overview)
+- [Project Structure](#project-structure)
 - [Installation](#installation)
-- [Data Preparation](#data-preparation)
-- [Pipeline Overview](#pipeline-overview)
+- [Core Components](#core-components)
 - [Usage Guide](#usage-guide)
-    - [Data Ingestion](#data-ingestion)
-    - [Data Preprocessing](#data-preprocessing)
-    - [Tokenization](#tokenization)
-    - [Training](#training)
+- [Configuration](#configuration)
 - [Model Architecture](#model-architecture)
 - [Output Format](#output-format)
-- [Neighbor Predictions](#neighbor-predictions)
+
+## Project Overview
+
+This project implements a BERT-based model specifically designed for spatial transcriptomics data analysis. Key features include:
+
+- Custom tokenization for biological data
+- Context-aware masking strategy
+- Efficient preprocessing pipeline
+- Cell-cell interaction modeling
+- Spatial coordinate integration
+- Gene expression pattern analysis
+
+## Project Structure
+
+```
+project/
+├── src/
+│   ├── bert/                           # BERT model implementation
+│   │   ├── tokenizer/                  # Custom tokenization
+│   │   │   ├── tokeniser.py           # Tokenizer implementation
+│   │   │   ├── corpus.txt             # Training corpus
+│   │   │   ├── corpus_gen.py          # Corpus generation
+│   │   │   └── data_prep.json         # Tokenizer configuration
+│   │   ├── experiments/               # Training experiments
+│   │   │   ├── MLM/                   # Masked Language Model
+│   │   │   │   ├── base.py           # Base MLM implementation
+│   │   │   │   └── mask.py           # Custom masking strategy
+│   │   │   └── neighbourhood_analysis/ # Spatial analysis
+│   │   ├── outputs/                   # Model outputs
+│   │   │   ├── final_model/          # Production model
+│   │   │   └── BEST_MODEL/           # Best performing model
+│   │   ├── spatial_bert_data/         # Processed data
+│   │   ├── base.py                    # Base model architecture
+│   │   ├── compute_loss.py            # Loss functions
+│   │   ├── data_prep.py              # Data preprocessing
+│   │   ├── dataloader.py             # Data loading utilities
+│   │   └── main.py                   # Training entry point
+│   ├── ingest/                        # Data ingestion
+│   │   ├── __init__.py
+│   │   └── _methods.py               # Ingestion methods
+│   ├── cancer/                        # Cancer analysis
+│   ├── data/                          # Data processing
+│   ├── figures/                       # Output figures
+│   └── pipeline.py                    # Main pipeline
+├── config.yaml                        # Configuration file
+├── requirements.txt                   # Dependencies
+├── training_res.json                  # Training results
+└── .env                              # Environment variables
+```
 
 ## Installation
 
 1. Clone the repository:
 
 ```bash
-git clone <repository-url>
-cd <repository-name>
+git clone <https://github.com/oddFEELING/dissertation>
+cd <dissertation>
 ```
 
 2. Create and activate a virtual environment:
@@ -42,362 +87,393 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Data Preparation
+## Core Components
 
-1. Create the following directory structure:
+### Custom Tokenizer
 
-```
-project/
-├── data/
-│   ├── raw/                 # Place your raw data files here
-│   └── processed/           # Processed data will be stored here
-├── src/
-│   ├── ingest/             # Data ingestion scripts
-│   ├── bert/               # BERT model implementation
-│   └── ...
-└── checkpoints/            # Model checkpoints will be saved here
-```
+The `TissueTokenizer` is specifically designed for spatial transcriptomics data:
 
-2. Place your spatial transcriptomics data in the `data/raw/` directory. Supported formats:
+- Special tokens for biological features:
+  - `[TISSUE]`: Tissue type markers
+  - `[SPATIAL]`: Spatial coordinates
+  - `[CANCER]`: Cancer scores
+  - `[GENE]`: Gene markers
+  - `[REACT]`: Cell reactivity
+  - `[MITO_HIGH/MED/LOW]`: Mitochondrial activity levels
+- Preserves important biological tokens:
+  - Gene symbols (e.g., `gene_TP53`)
+  - Tissue types (e.g., `brain_cancer`)
+  - Spatial coordinates
+- Custom validation for spatial coordinates (-100 to 100 range)
 
-- H5AD files
-- 10x Genomics Visium data
-- Spatial transcriptomics matrices with coordinates
+### Masking Strategy
 
-## Pipeline Overview
+Context-aware masking with specialized probabilities:
 
-The pipeline consists of four main stages:
-
-1. Data Ingestion: Convert raw data into standardized format
-2. Data Preprocessing: Prepare features and spatial information
-3. Tokenization: Convert biological data into BERT-compatible tokens
-4. Training: Train the BERT model on the processed data
-
-## Usage Guide
-
-### Data Ingestion
-
-The ingestion pipeline converts your raw data into a standardized H5AD format with required annotations.
-
-```python
-from src.ingest.ingest import process_data
-
-# Process raw data
-process_data(
-    input_path='data/raw/your_data.h5ad',
-    output_path='data/processed/processed_data.h5ad',
-    tissue_type='brain'  # Specify tissue type
-)
-```
-
-Required annotations that will be added:
-
-- `tissue_type`: Type of tissue
-- `n_genes_by_counts`: Number of genes expressed
-- `total_counts`: Total RNA counts
-- `pct_counts_mito`: Percentage of mitochondrial genes
-- `pct_counts_ribo`: Percentage of ribosomal genes
-- `cancer_score`: Cancer likelihood score (if applicable)
+- Special tokens: 5% masking probability
+- Tissue types: 20% masking probability
+- Numerical values: 15% masking probability
+- Gene names: 10% masking probability
+- Preserves sequence dependencies
+- Maintains structural tokens (`[CLS]`, `[SEP]`, `[PAD]`)
 
 ### Data Preprocessing
 
-Prepare the data for the BERT model:
+Efficient preprocessing pipeline with:
+
+- Gene expression normalization (0-1 range)
+- Spatial coordinate scaling (-100 to 100)
+- Cell interactivity calculations
+- Memory-optimized batch processing
+- Distance matrix caching
+- Vectorized operations
+
+## Usage Guide
+
+### Data Preparation
 
 ```python
-from src.bert.data_prep import TransformerDataPrep
+from src.bert.data_prep import DataPrep
 
-# Initialize data preparation
-data_prep = TransformerDataPrep(
-    adata_path='data/processed/processed_data.h5ad'
-)
+# Initialize preprocessing
+prep = DataPrep(adata_path='path/to/data.h5ad')
 
-# Prepare data
-combined_tensor, distances, feature_info = data_prep.prepare_data()
-
-# Create processed data dictionary
-processed_data = {
-    "combined_features": combined_tensor,
-    "distance_info": distances,
-    "feature_info": feature_info
-}
+# Process data
+processed_data = prep.prepare_data()
 ```
-
-This step:
-
-- Computes spatial distances between spots
-- Creates feature matrices
-- Normalizes gene expression data
-- Computes connectivity information
-
-### Tokenization
-
-Convert biological data into tokens for BERT:
-
-```python
-from src.bert.tokenizer.tokeniser import IncrementalTissueTokenizer
-
-# Initialize tokenizer
-tokenizer = IncrementalTissueTokenizer()
-
-# Add tissue data to tokenizer
-tokenizer.add_tissue(
-    tissue_type='brain',
-    adata=data_prep.adata,
-    processed_data=processed_data
-)
-
-# Save tokenizer for future use
-tokenizer.save()
-```
-
-The tokenizer creates sequences that include:
-
-- Spatial location tokens
-- Tissue type information
-- Gene expression levels
-- Cell state indicators
-- Neighborhood information
 
 ### Training
 
-Train the BERT model:
-
 ```python
 from src.bert.main import train_model
+
+# Train the model
+model = train_model(
+    processed_data,
+    config_path='config.yaml'
+)
+```
+
+### Detailed Examples
+
+#### 1. Data Loading and Preprocessing
+
+```python
+from src.bert.data_prep import DataPrep
 from src.bert.dataloader import create_st_dataloaders
 
-# Create dataloaders
+# Initialize data preparation
+data_prep = DataPrep(adata_path='data/processed/sample.h5ad')
+
+# Process the data with custom parameters
+processed_data = data_prep.prepare_data(
+    normalize_expression=True,
+    compute_neighbors=True,
+    n_neighbors=12,
+    distance_threshold=100.0
+)
+
+# Create dataloaders for training
 train_loader, val_loader = create_st_dataloaders(
     adata=data_prep.adata,
     processed_data=processed_data,
-    tokenizer=tokenizer,
-    batch_size=32
+    batch_size=16,
+    val_split=0.2,
+    shuffle=True,
+    num_workers=4
 )
 
-# Initialize and train model
+# Iterate through batches
+for batch in train_loader:
+    # Access different components of the batch
+    input_ids = batch['input_ids']           # Token IDs
+    attention_mask = batch['attention_mask']  # Attention mask
+    spatial_coords = batch['spatial_coords']  # Spatial coordinates
+    gene_expr = batch['gene_expr']           # Gene expression values
+```
+
+#### 2. Tokenizer Usage
+
+```python
+from src.bert.tokenizer.tokeniser import TissueTokenizer
+
+# Initialize tokenizer
+tokenizer = TissueTokenizer(base_model_name='bert-base-uncased')
+
+# Add gene vocabulary
+gene_names = ['TP53', 'BRCA1', 'MYC', 'EGFR']  # Your gene list
+tokenizer.add_gene_tokens(gene_names)
+
+# Example of tokenizing a tissue sequence
+sequence = "[TISSUE] brain_cancer [SPATIAL] -16.49 82.62 [GENE] gene_TP53 0.85"
+encoded = tokenizer.tokenizer.encode(
+    sequence,
+    add_special_tokens=True,
+    return_tensors='pt'
+)
+
+# Verify token sequence
+tokenizer.validate_token_sequence(sequence)
+
+# Save tokenizer for later use
+tokenizer.save_tokenizer('tokenizer/_internal')
+
+# Load existing tokenizer
+loaded_tokenizer = TissueTokenizer.load_tokenizer('tokenizer/_internal')
+```
+
+#### 3. Model Training and Inference
+
+```python
+from src.bert.main import train_model
+from src.bert.base import CellMetaBERT
+import torch
+
+# Initialize model with custom configuration
 model = CellMetaBERT(
-    feature_info=processed_data['feature_info'],
-    debug=True
+    config={
+        'hidden_size': 768,
+        'num_hidden_layers': 12,
+        'num_attention_heads': 12,
+        'intermediate_size': 3072,
+        'hidden_dropout_prob': 0.1,
+        'attention_probs_dropout_prob': 0.1
+    }
 )
 
-trainer = SpatialTrainer(
+# Training loop with custom parameters
+trainer = train_model(
     model=model,
     train_loader=train_loader,
     val_loader=val_loader,
     learning_rate=1e-4,
     num_epochs=10,
-    save_dir="checkpoints/run_1"
+    device='cuda' if torch.cuda.is_available() else 'cpu',
+    checkpoint_dir='checkpoints/',
+    log_interval=100
 )
 
-trainer.train()
+# Inference example
+model.eval()
+with torch.no_grad():
+    # Prepare input data
+    input_data = {
+        'input_ids': encoded,
+        'attention_mask': torch.ones_like(encoded),
+        'spatial_coords': torch.tensor([[-16.49, 82.62]]),
+        'gene_expr': torch.tensor([[0.85, 0.0, 0.3, 0.5]])  # Example gene expressions
+    }
+
+    # Get predictions
+    outputs = model(**input_data)
+
+    # Access different predictions
+    cell_states = outputs['cell_states']
+    neighbor_preds = outputs['neighbor_predictions']
+    gene_expr_preds = outputs['gene_expression_predictions']
+
+# Save model
+torch.save(model.state_dict(), 'outputs/final_model/model.pt')
+
+# Load model for inference
+loaded_model = CellMetaBERT(config=model.config)
+loaded_model.load_state_dict(torch.load('outputs/final_model/model.pt'))
 ```
 
-Training parameters can be adjusted:
+#### 4. Complete Pipeline Example
 
-- `batch_size`: Number of spots per batch
-- `learning_rate`: Learning rate for optimization
-- `num_epochs`: Number of training epochs
-- `save_dir`: Directory to save checkpoints
+```python
+from src.pipeline import run_pipeline
+from pathlib import Path
+
+# Setup pipeline configuration
+pipeline_config = {
+    'data_path': 'data/raw/sample.h5ad',
+    'output_dir': Path('outputs/'),
+    'model_params': {
+        'batch_size': 16,
+        'learning_rate': 1e-4,
+        'num_epochs': 10
+    },
+    'preprocessing': {
+        'normalize': True,
+        'n_neighbors': 12,
+        'distance_threshold': 100.0
+    }
+}
+
+# Run complete pipeline
+results = run_pipeline(
+    config=pipeline_config,
+    save_checkpoints=True,
+    verbose=True
+)
+
+# Access pipeline results
+trained_model = results['model']
+evaluation_metrics = results['metrics']
+predictions = results['predictions']
+```
+
+## Configuration
+
+Configuration options in `config.yaml`:
+
+```yaml
+model_config:
+  hidden_size: 768
+  num_hidden_layers: 12
+  num_attention_heads: 12
+  hidden_dropout_prob: 0.1
+
+data_prep:
+  max_dist: 100.0
+  max_neighbors: 12
+
+training:
+  batch_size: 16
+  learning_rate: 1e-4
+  num_epochs: 10
+  val_split: 0.2
+```
 
 ## Model Architecture
 
-The model uses a BERT-based architecture with:
+The model uses a BERT-based architecture specifically adapted for spatial transcriptomics data analysis. Here's a detailed breakdown of its components:
 
-- Pre-trained BERT base model
-- Spatial encoding layers
-- Direction-specific prediction heads
-- Gene expression prediction modules
+### Base Architecture
 
-Key features:
+- **Transformer Encoder**:
+  - 12 transformer layers with 768 hidden dimensions
+  - 12 attention heads for multi-head attention
+  - Custom positional encoding for spatial coordinates
+  - Dropout rate of 0.1 for regularization
 
-- Attention to spatial relationships
-- Cell-cell communication modeling
-- Gene expression pattern recognition
-- Border cell handling
+### Specialized Components
+
+#### 1. Spatial Encoding Layer
+
+- Converts spatial coordinates into continuous representations
+- Handles both absolute and relative positions
+- Integrates distance-based attention weights
+- Supports 2D spatial relationships in tissue context
+
+#### 2. Cell-Cell Communication Module
+
+- Analyzes interactions between neighboring cells
+- Features:
+  - Distance-weighted attention mechanism
+  - Neighbor relationship encoding
+  - Interaction strength prediction
+  - Border cell detection
+
+#### 3. Gene Expression Module
+
+- Processes gene expression data with:
+  - Gene-specific embeddings
+  - Expression level normalization
+  - Variable gene attention mechanism
+  - Tissue-specific gene patterns
+
+#### 4. Attention Mechanisms
+
+- **Spatial Attention**:
+  - Distance-based attention weights
+  - Neighborhood-aware attention
+  - Tissue boundary consideration
+- **Gene Attention**:
+  - Expression level-based attention
+  - Gene co-expression patterns
+  - Tissue-specific gene importance
+
+### Training Objectives
+
+1. **Masked Language Modeling (MLM)**:
+
+   - Context-aware masking strategy
+   - Different masking probabilities for different token types
+   - Special handling of biological tokens
+
+2. **Spatial Prediction**:
+
+   - Neighbor prediction task
+   - Distance estimation
+   - Border cell classification
+
+3. **Gene Expression Prediction**:
+   - Expression level prediction
+   - Gene co-expression patterns
+   - Cell type marker prediction
+
+### Model Inputs
+
+The model accepts multiple input types:
+
+1. **Tokenized Sequences**:
+
+   - Tissue markers
+   - Spatial coordinates
+   - Gene expressions
+   - Cell state indicators
+
+2. **Spatial Information**:
+
+   - 2D coordinates (scaled to [-100, 100])
+   - Distance matrices
+   - Neighborhood graphs
+
+3. **Expression Data**:
+   - Normalized gene expressions
+   - Variable genes
+   - Mitochondrial activity
+   - Cell reactivity scores
+
+### Model Outputs
+
+The model produces a comprehensive analysis:
+
+1. **Cell-Level Predictions**:
+
+   - Cell state classification
+   - Border cell probability
+   - Cell reactivity scores
+   - Gene expression profiles
+
+2. **Spatial Analysis**:
+
+   - Neighbor predictions
+   - Interaction strengths
+   - Spatial patterns
+   - Tissue organization
+
+3. **Gene Expression Analysis**:
+   - Gene expression predictions
+   - Co-expression patterns
+   - Marker gene identification
+   - Expression probabilities
+
+### Performance Optimization
+
+- Efficient attention computation
+- Cached distance calculations
+- Vectorized operations
+- Memory-optimized batch processing
+- Custom loss functions for biological relevance
 
 ## Output Format
 
-The model produces predictions in the following format:
+The model produces predictions including:
 
-```python
-prediction = {
-    'spot_id': 123,
-    'spot_location': {'x': 0.45, 'y': 0.67},
-    'is_border_cell': True,
-    'neighbors': [  # Array of all predicted neighbors
-        {
-            'spot_id': 124,
-            'location': {'x': 0.48, 'y': 0.70},  # Spatial coordinates
-            'distance': 45.2,
-            'interaction_strength': 0.85,
-            'features': {
-                'cancer_score': 0.76,
-                'total_counts': 5230,
-                'n_genes': 245,
-                'pct_counts_mito': 12.3,
-                'pct_counts_ribo': 8.7
-            },
-            'gene_expression': {
-                'high_expression_genes': ['TP53', 'BRCA1', 'MYC'],
-                'expression_probabilities': {
-                    'TP53': 0.85,
-                    'BRCA1': 0.72,
-                    'MYC': 0.91
-                }
-            }
-        },
-        {
-            'spot_id': 125,
-            'location': {'x': 0.42, 'y': 0.64},
-            # ... same structure as above
-        },
-        # ... array continues for all predicted neighbors
-    ]
-}
-```
+- Cell-cell interactions
+- Gene expression patterns
+- Spatial relationships
+- Cancer scores
+- Cell state indicators
 
-For each spot, the model predicts:
+Each prediction includes:
 
-- An array of all potential neighbors
-- Each neighbor's spatial coordinates
-- Feature values and gene expressions
+- Spot ID and location
+- Neighbor information
+- Feature values
+- Gene expression probabilities
 - Interaction strengths
-- Border cell characteristics
-
-This array-based approach:
-
-1. Simplifies the output structure
-2. Makes it easier to process neighbor relationships
-3. Provides direct spatial information
-4. Allows for flexible number of neighbors
-
-## Neighbor Predictions
-
-The model predicts all possible neighbors within a configurable radius for each spot, using a radial approach rather
-than fixed directions. This allows for more natural and comprehensive cell-cell interaction modeling.
-
-### Neighborhood Definition
-
-For each spot, neighbors are determined by:
-
-1. Spatial distance threshold (configurable)
-2. K-nearest neighbors (configurable)
-3. Connectivity graph based on Delaunay triangulation
-
-Example visualization:
-
-```
-    N2  N3  N4
-  N1  ↘↓↙  N5
-    ← Spot →
-  N8  ↗↑↖  N6
-    N7  N6  N5
-```
-
-Where N1-N8 represent potential neighbors, with the actual number varying based on:
-
-- Tissue density
-- Spatial distribution
-- Distance threshold
-- K-nearest neighbor parameter
-
-### Neighbor Predictions
-
-For each detected neighbor, the model predicts:
-
-1. Interaction strength (0-1)
-2. Feature values
-3. Gene expression patterns
-4. Cell-cell communication likelihood
-
-Benefits of radial neighbor prediction:
-
-1. More natural tissue representation
-2. Captures all possible cell-cell interactions
-3. Better handles irregular tissue structures
-4. More accurate border detection
-5. Scale-invariant predictions
-
-### Configuration Options
-
-The neighborhood prediction can be configured through parameters:
-
-```python
-model = CellMetaBERT(
-    feature_info=processed_data['feature_info'],
-    max_neighbors=12,  # Maximum number of neighbors to predict
-    distance_threshold=100,  # Maximum distance in microns
-    min_neighbors=3,  # Minimum neighbors to consider
-    use_knn=True,  # Use K-nearest neighbors for initial filtering
-    debug=True
-)
-```
-
-The model will:
-
-1. Find all spots within the distance threshold
-2. Use KNN to filter to the most relevant neighbors
-3. Predict features and gene expressions for each neighbor
-4. Return an array of predictions sorted by interaction strength
-
-This simplified approach focuses on:
-
-- Direct spatial relationships
-- Actual physical distances
-- Real coordinates instead of angles
-- Flexible number of neighbors per spot
-
-### Output Format
-
-The model's predictions now include all neighbors:
-
-```python
-prediction = {
-    'spot_id': 123,
-    'spot_location': {'x': 0.45, 'y': 0.67},
-    'is_border_cell': True,
-    'neighbors': {
-        'neighbor_1': {
-            'spot_id': 124,
-            'distance': 45.2,
-            'angle': 45.6,  # Angle in degrees from reference
-            'interaction_strength': 0.85,
-            'features': {
-                'cancer_score': 0.76,
-                'total_counts': 5230,
-                'n_genes': 245,
-                'pct_counts_mito': 12.3,
-                'pct_counts_ribo': 8.7
-            },
-            'gene_expression': {
-                'high_expression_genes': ['TP53', 'BRCA1', 'MYC'],
-                'expression_probabilities': {
-                    'TP53': 0.85,
-                    'BRCA1': 0.72,
-                    'MYC': 0.91
-                }
-            }
-        },
-        'neighbor_2': {
-            # Similar structure for other neighbors
-        },
-        # ... up to max_neighbors
-    }
-}
-```
-
-### Border Detection
-
-Border cells are now identified by:
-
-- Number of neighbors below threshold
-- Spatial distribution of neighbors
-- Tissue boundary analysis
-- Local density patterns
-
-This approach provides a more comprehensive understanding of:
-
-- Cell-cell communication networks
-- Tissue organization
-- Local microenvironment
-- Spatial gene expression patterns
